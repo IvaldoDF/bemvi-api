@@ -23,8 +23,85 @@ import {
   onAuthStateChanged,
 } from 'firebase/auth';
 
+const OPCOES_DIFICULDADE = ['TEA', 'TDAH', 'TOD', 'OUTROS'];
+
+function criarFilhoVazio() {
+  return {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    nome: '',
+    dataNascimento: '', // formato DD/MM/AAAA
+    idade: '',
+    dificuldades: [],
+    outraDificuldade: '',
+  };
+}
+
+function calcularIdadeDeDataBR(dataStr) {
+  const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(dataStr.trim());
+  if (!match) return '';
+
+  const dia = parseInt(match[1], 10);
+  const mes = parseInt(match[2], 10);
+  const ano = parseInt(match[3], 10);
+
+  if (mes < 1 || mes > 12 || dia < 1 || dia > 31) return '';
+
+  const hoje = new Date();
+  const nascimento = new Date(ano, mes - 1, dia);
+
+  if (
+    nascimento.getFullYear() !== ano ||
+    nascimento.getMonth() !== mes - 1 ||
+    nascimento.getDate() !== dia ||
+    nascimento > hoje
+  ) {
+    return '';
+  }
+
+  let anos = hoje.getFullYear() - ano;
+  const diferencaMeses = hoje.getMonth() - (mes - 1);
+  if (diferencaMeses < 0 || (diferencaMeses === 0 && hoje.getDate() < dia)) {
+    anos--;
+  }
+
+  if (anos < 0) return '';
+  if (anos === 0) {
+    let meses = (hoje.getFullYear() - ano) * 12 + (hoje.getMonth() - (mes - 1));
+    if (hoje.getDate() < dia) meses--;
+    return meses <= 0 ? 'Menos de 1 mês' : `${meses} ${meses === 1 ? 'mês' : 'meses'}`;
+  }
+
+  return `${anos} ${anos === 1 ? 'ano' : 'anos'}`;
+}
+
+function mensagemErroAuth(code) {
+  switch (code) {
+    case 'auth/invalid-email':
+      return 'O formato do e-mail informado é inválido.';
+    case 'auth/user-not-found':
+    case 'auth/wrong-password':
+    case 'auth/invalid-credential':
+      return 'E-mail ou senha incorretos. Verifique seus dados e tente novamente.';
+    case 'auth/user-disabled':
+      return 'Esta conta foi desativada. Entre em contato com o suporte.';
+    case 'auth/too-many-requests':
+      return 'Muitas tentativas seguidas. Aguarde alguns instantes e tente novamente.';
+    case 'auth/email-already-in-use':
+      return 'Este e-mail já possui uma conta cadastrada.';
+    case 'auth/weak-password':
+      return 'A senha é muito fraca. Utilize pelo menos 6 caracteres.';
+    case 'auth/network-request-failed':
+      return 'Sem conexão com a internet. Verifique sua rede e tente novamente.';
+    case 'auth/operation-not-allowed':
+      return 'O login por e-mail e senha não está habilitado no Firebase.';
+    default:
+      return 'Não foi possível concluir a operação. Tente novamente.';
+  }
+}
+
 export default function App() {
-  const [telaAtual, setTelaAtual] = useState('welcome'); // 'welcome' | 'login' | 'cadastro' | 'home'
+  // 'welcome' | 'login' | 'cadastro' | 'cadastro_filhos' | 'home'
+  const [telaAtual, setTelaAtual] = useState('welcome');
   const [abaHome, setAbaHome] = useState('inicio'); // 'inicio' | 'apoio' | 'profissionais' | 'mapa' | 'perfil'
   const [nome, setNome] = useState('');
   const [tipos, setTipos] = useState({
@@ -37,25 +114,72 @@ export default function App() {
   const [senha, setSenha] = useState('');
   const [mostrarSenha, setMostrarSenha] = useState(false);
   const [initializing, setInitializing] = useState(true);
+  const [enviandoAuth, setEnviandoAuth] = useState(false);
+
+  // Estado para múltiplos filhos após o cadastro da mãe
+  const [filhos, setFilhos] = useState([criarFilhoVazio()]);
 
   useEffect(() => {
     const subscriber = onAuthStateChanged(auth, (user) => {
       if (user) {
-        setTelaAtual('home');
+        setTelaAtual((prev) => (prev === 'cadastro_filhos' ? prev : 'home'));
       } else {
-        setTelaAtual((prev) => (prev === 'home' ? 'welcome' : prev));
+        setTelaAtual((prev) =>
+          prev === 'home' || prev === 'cadastro_filhos' ? 'welcome' : prev
+        );
       }
       if (initializing) setInitializing(false);
     });
     return subscriber;
   }, []);
 
-  const alternarTipo = (chave) => {
-    setTipos((prev) => ({ ...prev, [chave]: !prev[chave] }));
+  const adicionarFilho = () => {
+    setFilhos((prev) => [...prev, criarFilhoVazio()]);
+  };
+
+  const removerFilho = (id) => {
+    setFilhos((prev) => {
+      if (prev.length <= 1) return prev;
+      return prev.filter((item) => item.id !== id);
+    });
+  };
+
+  const atualizarCampoFilho = (id, campo, valor) => {
+    setFilhos((prev) =>
+      prev.map((filho) => {
+        if (filho.id !== id) return filho;
+
+        if (campo === 'dataNascimento') {
+          const idadeCalculada = calcularIdadeDeDataBR(valor);
+          return {
+            ...filho,
+            dataNascimento: valor,
+            idade: idadeCalculada || filho.idade,
+          };
+        }
+
+        return { ...filho, [campo]: valor };
+      })
+    );
+  };
+
+  const alternarDificuldadeFilho = (id, dificuldade) => {
+    setFilhos((prev) =>
+      prev.map((filho) => {
+        if (filho.id !== id) return filho;
+        const existe = filho.dificuldades.includes(dificuldade);
+        const novasDificuldades = existe
+          ? filho.dificuldades.filter((item) => item !== dificuldade)
+          : [...filho.dificuldades, dificuldade];
+        return { ...filho, dificuldades: novasDificuldades };
+      })
+    );
   };
 
   // Função para fazer login com o Firebase
   const handleLogin = async () => {
+    if (enviandoAuth) return;
+
     const emailLimpo = email.trim();
     const senhaLimpa = senha.trim();
 
@@ -64,17 +188,22 @@ export default function App() {
       return;
     }
 
+    setEnviandoAuth(true);
     try {
       await signInWithEmailAndPassword(auth, emailLimpo, senhaLimpa);
       setTelaAtual('home');
     } catch (error) {
       console.log('Erro no Login:', error.code, error.message);
-      Alert.alert('Erro no Login', error.message);
+      Alert.alert('Erro no Login', mensagemErroAuth(error.code));
+    } finally {
+      setEnviandoAuth(false);
     }
   };
 
-  // Função para registrar nova conta no Firebase a partir da tela de Cadastro
+  // Função para registrar nova conta no Firebase e seguir para o cadastro dos filhos
   const handleRegister = async () => {
+    if (enviandoAuth) return;
+
     const nomeLimpo = nome.trim();
     const emailLimpo = email.trim();
     const senhaLimpa = senha.trim();
@@ -89,23 +218,81 @@ export default function App() {
       return;
     }
 
+    setEnviandoAuth(true);
     try {
       const userCredential = await createUserWithEmailAndPassword(auth, emailLimpo, senhaLimpa);
-      await updateProfile(userCredential.user, { displayName: nomeLimpo });
+
+      try {
+        await updateProfile(userCredential.user, { displayName: nomeLimpo });
+      } catch (profileError) {
+        console.log('Aviso ao atualizar perfil:', profileError.code, profileError.message);
+      }
 
       const tiposSelecionados = Object.keys(tipos).filter((chave) => tipos[chave]);
       console.log('Conta criada:', userCredential.user.uid, 'Tipos:', tiposSelecionados);
 
-      Alert.alert('Sucesso', 'Conta criada com sucesso!');
-      setTelaAtual('home');
+      setFilhos([criarFilhoVazio()]);
+      Alert.alert(
+        'Conta criada!',
+        'Agora adicione as informações dos seus filhos para personalizar seu acolhimento.'
+      );
+      setTelaAtual('cadastro_filhos');
     } catch (error) {
       console.log('Erro ao criar conta:', error.code, error.message);
-      Alert.alert('Erro ao criar conta', error.message);
+
+      if (error.code === 'auth/email-already-in-use') {
+        Alert.alert(
+          'E-mail já cadastrado',
+          'Este e-mail já possui uma conta. Deseja fazer login com ele?',
+          [
+            { text: 'Cancelar', style: 'cancel' },
+            {
+              text: 'Ir para Login',
+              onPress: () => {
+                setMostrarSenha(false);
+                setTelaAtual('login');
+              },
+            },
+          ]
+        );
+      } else {
+        Alert.alert('Erro ao criar conta', mensagemErroAuth(error.code));
+      }
+    } finally {
+      setEnviandoAuth(false);
     }
+  };
+
+  // Salva/valida os filhos cadastrados e avança para o painel principal
+  const handleSalvarFilhos = () => {
+    const filhosValidos = filhos.filter((f) => f.nome.trim().length > 0);
+
+    if (filhosValidos.length === 0) {
+      Alert.alert(
+        'Atenção',
+        'Informe pelo menos o nome de um filho ou toque em "Pular por agora".'
+      );
+      return;
+    }
+
+    const dadosFormatados = filhosValidos.map((f) => ({
+      nome: f.nome.trim(),
+      dataNascimento: f.dataNascimento.trim(),
+      idade: f.idade.trim() || calcularIdadeDeDataBR(f.dataNascimento),
+      dificuldades: f.dificuldades,
+      outraDificuldade: f.outraDificuldade.trim(),
+    }));
+
+    console.log('Filhos cadastrados:', dadosFormatados);
+    Alert.alert('Tudo certo!', `${dadosFormatados.length} filho(a)(s) registrado(s) com sucesso.`);
+    setTelaAtual('home');
   };
 
   // Função para sair da conta (Logout real)
   const handleLogout = async () => {
+    if (enviandoAuth) return;
+
+    setEnviandoAuth(true);
     try {
       await signOut(auth);
       setNome('');
@@ -113,17 +300,18 @@ export default function App() {
       setEmail('');
       setSenha('');
       setMostrarSenha(false);
+      setFilhos([criarFilhoVazio()]);
       setAbaHome('inicio');
       setTelaAtual('welcome');
     } catch (error) {
-      console.log('Erro ao sair:', error.message);
-      Alert.alert('Erro', 'Não foi possível terminar a sessão.');
+      console.log('Erro ao sair:', error.code, error.message);
+      Alert.alert('Erro ao sair', mensagemErroAuth(error.code));
+    } finally {
+      setEnviandoAuth(false);
     }
   };
 
-  // ==========================================
-  // TELA 1: APRESENTAÇÃO / BOAS-VINDAS
-  // ==========================================
+  // TELA 1: BOAS-VINDAS
   if (telaAtual === 'welcome') {
     return (
       <View style={styles.containerWelcome}>
@@ -154,9 +342,7 @@ export default function App() {
     );
   }
 
-  // ==========================================
   // TELA 2: LOGIN COM FIREBASE
-  // ==========================================
   if (telaAtual === 'login') {
     return (
       <KeyboardAvoidingView
@@ -205,10 +391,13 @@ export default function App() {
           </View>
 
           <TouchableOpacity
-            style={styles.btnLogin}
+            style={[styles.btnLogin, enviandoAuth && styles.btnDesabilitado]}
             onPress={handleLogin}
+            disabled={enviandoAuth}
           >
-            <Text style={styles.btnLoginText}>ACESSAR</Text>
+            <Text style={styles.btnLoginText}>
+              {enviandoAuth ? 'ENTRANDO...' : 'ACESSAR'}
+            </Text>
           </TouchableOpacity>
 
           <Text style={styles.textoPergunta}>PRIMEIRA VEZ?</Text>
@@ -236,9 +425,7 @@ export default function App() {
     );
   }
 
-  // ==========================================
-  // TELA 2.5: CADASTRO
-  // ==========================================
+  // TELA 2.1: CADASTRO MÃE ATÍPICA
   if (telaAtual === 'cadastro') {
     return (
       <KeyboardAvoidingView
@@ -248,7 +435,9 @@ export default function App() {
         <ScrollView contentContainerStyle={styles.scrollCadastro} showsVerticalScrollIndicator={false}>
           <View style={styles.loginContent}>
             <Text style={styles.loginTitle}>CADASTRO</Text>
-            <Text style={styles.loginSubtitle}>Crie sua conta para fazer parte da comunidade.</Text>
+            <Text style={styles.loginSubtitle}>
+              Crie sua conta para fazer parte da comunidade das mães atípicas.
+            </Text>
 
             <View style={styles.inputContainer}>
               <Text style={styles.inputLabel}>Nome</Text>
@@ -259,22 +448,6 @@ export default function App() {
                 value={nome}
                 onChangeText={setNome}
               />
-            </View>
-
-            <View style={styles.tiposContainer}>
-              <Text style={styles.inputLabel}>TIPOS</Text>
-              {['TDAH', 'TEA', 'TOD', 'OUTROS'].map((item) => (
-                <TouchableOpacity
-                  key={item}
-                  style={styles.checkboxLinha}
-                  onPress={() => alternarTipo(item)}
-                >
-                  <View style={[styles.checkbox, tipos[item] && styles.checkboxAtivo]}>
-                    {tipos[item] && <Ionicons name="checkmark" size={16} color="#FFF" />}
-                  </View>
-                  <Text style={styles.textoCheckbox}>{item}</Text>
-                </TouchableOpacity>
-              ))}
             </View>
 
             <View style={styles.inputContainer}>
@@ -315,10 +488,13 @@ export default function App() {
             </View>
 
             <TouchableOpacity
-              style={styles.btnLogin}
+              style={[styles.btnLogin, enviandoAuth && styles.btnDesabilitado]}
               onPress={handleRegister}
+              disabled={enviandoAuth}
             >
-              <Text style={styles.btnLoginText}>CADASTRAR</Text>
+              <Text style={styles.btnLoginText}>
+                {enviandoAuth ? 'CADASTRANDO...' : 'CADASTRAR E ADICIONAR FILHOS'}
+              </Text>
             </TouchableOpacity>
 
             <Text style={styles.textoPergunta}>JÁ TEM CADASTRO?</Text>
@@ -340,9 +516,138 @@ export default function App() {
     );
   }
 
-  // ==========================================
+  // TELA 2.2: CADASTRO DOS FILHOS (PÓS-CADASTRO DA MÃE)
+  if (telaAtual === 'cadastro_filhos') {
+    return (
+      <SafeAreaView style={styles.containerFilhos}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={{ flex: 1 }}
+        >
+          <ScrollView
+            contentContainerStyle={styles.scrollFilhos}
+            showsVerticalScrollIndicator={false}
+          >
+            <View style={styles.loginContent}>
+              <Text style={styles.loginTitle}>SEUS FILHOS</Text>
+              <Text style={styles.loginSubtitle}>
+                {nome ? `${nome.trim()}, adicione` : 'Adicione'} quantos filhos precisar, com data de nascimento, idade e dificuldades/neurodivergências.
+              </Text>
+
+              {filhos.map((filho, index) => (
+                <View key={filho.id} style={styles.cardFilho}>
+                  <View style={styles.cardFilhoHeader}>
+                    <Text style={styles.cardFilhoTitulo}>Filho(a) {index + 1}</Text>
+                    {filhos.length > 1 && (
+                      <TouchableOpacity
+                        onPress={() => removerFilho(filho.id)}
+                        style={styles.btnRemoverFilho}
+                      >
+                        <Ionicons name="trash-outline" size={18} color="#B91C1C" />
+                        <Text style={styles.textoRemoverFilho}>Remover</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+
+                  <View style={styles.inputContainer}>
+                    <Text style={styles.inputLabel}>Nome do(a) filho(a)</Text>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Ex.: Lucas"
+                      placeholderTextColor="#888"
+                      value={filho.nome}
+                      onChangeText={(texto) => atualizarCampoFilho(filho.id, 'nome', texto)}
+                    />
+                  </View>
+
+                  <View style={styles.linhaDataIdade}>
+                    <View style={styles.colunaData}>
+                      <Text style={styles.inputLabel}>Data de nascimento</Text>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="DD/MM/AAAA"
+                        placeholderTextColor="#888"
+                        value={filho.dataNascimento}
+                        onChangeText={(texto) =>
+                          atualizarCampoFilho(filho.id, 'dataNascimento', texto)
+                        }
+                        keyboardType="numeric"
+                        maxLength={10}
+                      />
+                    </View>
+
+                    <View style={styles.colunaIdade}>
+                      <Text style={styles.inputLabel}>Idade</Text>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Ex.: 7 anos"
+                        placeholderTextColor="#888"
+                        value={filho.idade}
+                        onChangeText={(texto) => atualizarCampoFilho(filho.id, 'idade', texto)}
+                      />
+                    </View>
+                  </View>
+
+                  <View style={styles.tiposContainer}>
+                    <Text style={styles.inputLabel}>Dificuldade / Neurodivergência</Text>
+                    <View style={styles.chipsWrapper}>
+                      {OPCOES_DIFICULDADE.map((opcao) => {
+                        const selecionado = filho.dificuldades.includes(opcao);
+                        return (
+                          <TouchableOpacity
+                            key={opcao}
+                            style={[styles.chip, selecionado && styles.chipAtivo]}
+                            onPress={() => alternarDificuldadeFilho(filho.id, opcao)}
+                          >
+                            <Text style={[styles.chipTexto, selecionado && styles.chipTextoAtivo]}>
+                              {opcao}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  </View>
+
+                  <View style={styles.inputContainer}>
+                    <Text style={styles.inputLabel}>Outra dificuldade / observação (opcional)</Text>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Ex.: Dislexia, seletividade alimentar, fala..."
+                      placeholderTextColor="#888"
+                      value={filho.outraDificuldade}
+                      onChangeText={(texto) =>
+                        atualizarCampoFilho(filho.id, 'outraDificuldade', texto)
+                      }
+                    />
+                  </View>
+                </View>
+              ))}
+
+              <TouchableOpacity style={styles.btnAdicionarFilho} onPress={adicionarFilho}>
+                <Ionicons name="add-circle-outline" size={22} color="#2E7D32" />
+                <Text style={styles.btnAdicionarFilhoTexto}>ADICIONAR OUTRO FILHO</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={styles.btnLogin} onPress={handleSalvarFilhos}>
+                <Text style={styles.btnLoginText}>SALVAR E CONTINUAR</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.btnVoltar}
+                onPress={() => setTelaAtual('home')}
+              >
+                <Text style={styles.btnVoltarText}>Pular por agora</Text>
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
+        <StatusBar style="auto" />
+      </SafeAreaView>
+    );
+  }
+
   // TELA 3: HOME / PAINEL PRINCIPAL
-  // ==========================================
+
   return (
     <SafeAreaView style={styles.containerHome}>
       {/* Cabeçalho */}
@@ -351,7 +656,7 @@ export default function App() {
           <Ionicons name="menu-outline" size={28} color="#3E5C5B" />
         </TouchableOpacity>
         <Text style={styles.logoTextHome}>Bemvi</Text>
-        <TouchableOpacity onPress={handleLogout} style={styles.btnSairTopo}>
+        <TouchableOpacity onPress={handleLogout} style={styles.btnSairTopo} disabled={enviandoAuth}>
           <Ionicons name="log-out-outline" size={22} color="#B91C1C" />
         </TouchableOpacity>
       </View>
@@ -407,7 +712,7 @@ export default function App() {
         </View>
       </ScrollView>
 
-      {/* Barra de Ícones Fixa no Fim da Tela: Início, Apoio, Profissionais, Mapa e Perfil */}
+      {/* Barra de Ícones Fixa no Fim da Tela */}
       <View style={styles.tabBar}>
         <TouchableOpacity
           style={styles.tabItem}
@@ -538,15 +843,27 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
   },
 
+  containerFilhos: {
+    flex: 1,
+    backgroundColor: '#F5F5DC',
+    paddingHorizontal: 20,
+  },
+
   scrollCadastro: {
     flexGrow: 1,
     justifyContent: 'center',
     paddingVertical: 40,
   },
 
+  scrollFilhos: {
+    flexGrow: 1,
+    paddingTop: Platform.OS === 'android' ? 40 : 20,
+    paddingBottom: 36,
+  },
+
   loginContent: {
     width: '100%',
-    maxWidth: 400,
+    maxWidth: 420,
     alignSelf: 'center',
   },
 
@@ -560,11 +877,61 @@ const styles = StyleSheet.create({
   loginSubtitle: {
     fontSize: 14,
     color: '#666',
-    marginBottom: 24,
+    marginBottom: 20,
+    lineHeight: 20,
+  },
+
+  cardFilho: {
+    backgroundColor: '#EFECE2',
+    borderWidth: 1,
+    borderColor: '#D8D2C6',
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 16,
+  },
+
+  cardFilhoHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+
+  cardFilhoTitulo: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#3E5C5B',
+  },
+
+  btnRemoverFilho: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+  },
+
+  textoRemoverFilho: {
+    fontSize: 13,
+    color: '#B91C1C',
+    fontWeight: '600',
+  },
+
+  linhaDataIdade: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+
+  colunaData: {
+    flex: 1.4,
+  },
+
+  colunaIdade: {
+    flex: 1,
   },
 
   inputContainer: {
-    marginBottom: 16,
+    marginBottom: 14,
     width: '100%',
   },
 
@@ -580,9 +947,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#D8D2C6',
     borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 15,
     color: '#333',
   },
 
@@ -608,38 +975,59 @@ const styles = StyleSheet.create({
   },
 
   tiposContainer: {
-    marginBottom: 16,
+    marginBottom: 14,
     width: '100%',
   },
 
-  checkboxLinha: {
+  chipsWrapper: {
     flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 10,
-    paddingLeft: 4,
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 4,
   },
 
-  checkbox: {
-    width: 22,
-    height: 22,
-    borderRadius: 5,
-    borderWidth: 1.5,
+  chip: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 20,
+    borderWidth: 1,
     borderColor: '#3E5C5B',
     backgroundColor: '#FFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 10,
   },
 
-  checkboxAtivo: {
+  chipAtivo: {
     backgroundColor: '#2E7D32',
     borderColor: '#2E7D32',
   },
 
-  textoCheckbox: {
-    fontSize: 15,
-    color: '#333',
-    fontWeight: '500',
+  chipTexto: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#3E5C5B',
+  },
+
+  chipTextoAtivo: {
+    color: '#FFF',
+  },
+
+  btnAdicionarFilho: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    borderWidth: 1.5,
+    borderColor: '#2E7D32',
+    borderRadius: 12,
+    paddingVertical: 13,
+    backgroundColor: '#FFF',
+    marginBottom: 10,
+  },
+
+  btnAdicionarFilhoTexto: {
+    color: '#2E7D32',
+    fontWeight: 'bold',
+    fontSize: 14,
+    letterSpacing: 0.4,
   },
 
   btnLogin: {
@@ -647,14 +1035,18 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingVertical: 16,
     alignItems: 'center',
-    marginTop: 8,
+    marginTop: 6,
+  },
+
+  btnDesabilitado: {
+    opacity: 0.65,
   },
 
   btnLoginText: {
     color: '#FFF',
     fontWeight: 'bold',
-    fontSize: 16,
-    letterSpacing: 1,
+    fontSize: 15,
+    letterSpacing: 0.8,
   },
 
   textoPergunta: {
@@ -691,9 +1083,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 
-  // ==========================================
   // ESTILOS DA HOME COM RODAPÉ FIXO
-  // ==========================================
   containerHome: {
     flex: 1,
     backgroundColor: '#F5F5DC',
