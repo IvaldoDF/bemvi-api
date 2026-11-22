@@ -11,6 +11,7 @@ import {
   Platform,
   Alert,
   SafeAreaView,
+  Switch,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
@@ -103,6 +104,8 @@ export default function App() {
   // 'welcome' | 'login' | 'cadastro' | 'cadastro_filhos' | 'home'
   const [telaAtual, setTelaAtual] = useState('welcome');
   const [abaHome, setAbaHome] = useState('inicio'); // 'inicio' | 'apoio' | 'profissionais' | 'mapa' | 'perfil'
+  const [editandoFilhosPeloPerfil, setEditandoFilhosPeloPerfil] = useState(false);
+
   const [nome, setNome] = useState('');
   const [tipos, setTipos] = useState({
     TDAH: false,
@@ -116,8 +119,11 @@ export default function App() {
   const [initializing, setInitializing] = useState(true);
   const [enviandoAuth, setEnviandoAuth] = useState(false);
 
-  // Estado para múltiplos filhos após o cadastro da mãe
+  // Estado para múltiplos filhos
   const [filhos, setFilhos] = useState([criarFilhoVazio()]);
+
+  // Estado do modo anônimo no perfil
+  const [modoAnonimo, setModoAnonimo] = useState(false);
 
   useEffect(() => {
     const subscriber = onAuthStateChanged(auth, (user) => {
@@ -131,7 +137,7 @@ export default function App() {
       if (initializing) setInitializing(false);
     });
     return subscriber;
-  }, []);
+  }, [initializing]);
 
   const adicionarFilho = () => {
     setFilhos((prev) => [...prev, criarFilhoVazio()]);
@@ -176,7 +182,17 @@ export default function App() {
     );
   };
 
-  // Função para fazer login com o Firebase
+  const abrirEdicaoFilhos = (vindoDoPerfil = false) => {
+    setEditandoFilhosPeloPerfil(vindoDoPerfil);
+    setTelaAtual('cadastro_filhos');
+  };
+
+  const concluirCadastroFilhos = (destinoAba = 'inicio') => {
+    setEditandoFilhosPeloPerfil(false);
+    setAbaHome(destinoAba);
+    setTelaAtual('home');
+  };
+
   const handleLogin = async () => {
     if (enviandoAuth) return;
 
@@ -191,6 +207,7 @@ export default function App() {
     setEnviandoAuth(true);
     try {
       await signInWithEmailAndPassword(auth, emailLimpo, senhaLimpa);
+      setAbaHome('inicio');
       setTelaAtual('home');
     } catch (error) {
       console.log('Erro no Login:', error.code, error.message);
@@ -200,7 +217,6 @@ export default function App() {
     }
   };
 
-  // Função para registrar nova conta no Firebase e seguir para o cadastro dos filhos
   const handleRegister = async () => {
     if (enviandoAuth) return;
 
@@ -232,6 +248,7 @@ export default function App() {
       console.log('Conta criada:', userCredential.user.uid, 'Tipos:', tiposSelecionados);
 
       setFilhos([criarFilhoVazio()]);
+      setEditandoFilhosPeloPerfil(false);
       Alert.alert(
         'Conta criada!',
         'Agora adicione as informações dos seus filhos para personalizar seu acolhimento.'
@@ -263,7 +280,6 @@ export default function App() {
     }
   };
 
-  // Salva/valida os filhos cadastrados e avança para o painel principal
   const handleSalvarFilhos = () => {
     const filhosValidos = filhos.filter((f) => f.nome.trim().length > 0);
 
@@ -285,10 +301,9 @@ export default function App() {
 
     console.log('Filhos cadastrados:', dadosFormatados);
     Alert.alert('Tudo certo!', `${dadosFormatados.length} filho(a)(s) registrado(s) com sucesso.`);
-    setTelaAtual('home');
+    concluirCadastroFilhos(editandoFilhosPeloPerfil ? 'perfil' : 'inicio');
   };
 
-  // Função para sair da conta (Logout real)
   const handleLogout = async () => {
     if (enviandoAuth) return;
 
@@ -300,6 +315,8 @@ export default function App() {
       setEmail('');
       setSenha('');
       setMostrarSenha(false);
+      setModoAnonimo(false);
+      setEditandoFilhosPeloPerfil(false);
       setFilhos([criarFilhoVazio()]);
       setAbaHome('inicio');
       setTelaAtual('welcome');
@@ -516,7 +533,7 @@ export default function App() {
     );
   }
 
-  // TELA 2.2: CADASTRO DOS FILHOS (PÓS-CADASTRO DA MÃE)
+  // TELA 2.2: CADASTRO / EDIÇÃO DOS FILHOS
   if (telaAtual === 'cadastro_filhos') {
     return (
       <SafeAreaView style={styles.containerFilhos}>
@@ -634,9 +651,13 @@ export default function App() {
 
               <TouchableOpacity
                 style={styles.btnVoltar}
-                onPress={() => setTelaAtual('home')}
+                onPress={() =>
+                  concluirCadastroFilhos(editandoFilhosPeloPerfil ? 'perfil' : 'inicio')
+                }
               >
-                <Text style={styles.btnVoltarText}>Pular por agora</Text>
+                <Text style={styles.btnVoltarText}>
+                  {editandoFilhosPeloPerfil ? '← Voltar ao perfil' : 'Pular por agora'}
+                </Text>
               </TouchableOpacity>
             </View>
           </ScrollView>
@@ -646,71 +667,250 @@ export default function App() {
     );
   }
 
-  // TELA 3: HOME / PAINEL PRINCIPAL
+  // TELA 3: HOME / PAINEL PRINCIPAL & ABAS
+  const nomeExibicao = (
+    auth.currentUser?.displayName ||
+    nome ||
+    (auth.currentUser?.email ? auth.currentUser.email.split('@')[0] : '') ||
+    'MARIA'
+  ).toUpperCase();
+
+  const resumoFilhos = (() => {
+    const validos = filhos.filter(
+      (f) => f.nome.trim() || f.dificuldades.length > 0 || f.outraDificuldade.trim()
+    );
+    if (validos.length === 0) return 'FILHO, TEA';
+
+    return validos
+      .map((f) => {
+        const tags = [...f.dificuldades];
+        if (f.outraDificuldade.trim()) tags.push(f.outraDificuldade.trim().toUpperCase());
+        const sufixo = tags.length > 0 ? tags.join(', ') : 'FILHO(A)';
+        return f.nome.trim() ? `${f.nome.trim().toUpperCase()} (${sufixo})` : sufixo;
+      })
+      .join(' • ');
+  })();
+
+  const abrirOpcaoPerfil = (titulo, mensagem) => {
+    Alert.alert(titulo, mensagem);
+  };
 
   return (
     <SafeAreaView style={styles.containerHome}>
       {/* Cabeçalho */}
       <View style={styles.headerHome}>
-        <TouchableOpacity>
+        <TouchableOpacity
+          onPress={() =>
+            Alert.alert(
+              'Menu Bemvi',
+              `Você está em: ${abaHome.toUpperCase()}${modoAnonimo ? ' (Modo Anônimo ativo)' : ''}`
+            )
+          }
+        >
           <Ionicons name="menu-outline" size={28} color="#3E5C5B" />
         </TouchableOpacity>
-        <Text style={styles.logoTextHome}>Bemvi</Text>
-        <TouchableOpacity onPress={handleLogout} style={styles.btnSairTopo} disabled={enviandoAuth}>
-          <Ionicons name="log-out-outline" size={22} color="#B91C1C" />
-        </TouchableOpacity>
+
+        {abaHome === 'perfil' ? (
+          <TouchableOpacity
+            onPress={() =>
+              Alert.alert('Notificações', 'Nenhuma nova notificação no momento.')
+            }
+          >
+            <Ionicons name="notifications" size={26} color="#111" />
+          </TouchableOpacity>
+        ) : (
+          <>
+            <Text style={styles.logoTextHome}>Bemvi</Text>
+            <TouchableOpacity
+              onPress={handleLogout}
+              style={styles.btnSairTopo}
+              disabled={enviandoAuth}
+            >
+              <Ionicons name="log-out-outline" size={22} color="#B91C1C" />
+            </TouchableOpacity>
+          </>
+        )}
       </View>
 
-      <Text style={styles.subtitleHome}>Você não está sozinha.</Text>
-
-      {/* Área Central Rolável */}
-      <ScrollView
-        style={styles.scrollHome}
-        contentContainerStyle={styles.contentHome}
-        showsVerticalScrollIndicator={false}
-      >
-        <TouchableOpacity
-          style={[styles.mainButton, styles.btnBlue]}
-          onPress={() => setAbaHome('apoio')}
+      {abaHome === 'perfil' ? (
+        <ScrollView
+          style={styles.scrollPerfil}
+          contentContainerStyle={styles.contentPerfil}
+          showsVerticalScrollIndicator={false}
         >
-          <Ionicons name="heart-outline" size={20} color="#222" style={styles.btnIcon} />
-          <Text style={styles.buttonText}>PRECISO CONVERSAR</Text>
-        </TouchableOpacity>
+          <View style={styles.perfilHeaderCard}>
+            <View style={styles.avatarCirculo}>
+              <Ionicons
+                name={modoAnonimo ? 'eye-off' : 'person'}
+                size={44}
+                color="#111"
+              />
+            </View>
+            <View style={styles.perfilSaudacaoBox}>
+              <Text style={styles.perfilSaudacaoTexto}>
+                OLÁ! {modoAnonimo ? 'ANÔNIMA' : nomeExibicao}
+              </Text>
+              {modoAnonimo && (
+                <Text style={styles.perfilSubAnonimo}>
+                  Identidade ocultada na comunidade
+                </Text>
+              )}
+            </View>
+          </View>
 
-        <TouchableOpacity
-          style={[styles.mainButton, styles.btnGreen]}
-          onPress={() => setAbaHome('profissionais')}
-        >
-          <Ionicons name="medkit-outline" size={20} color="#222" style={styles.btnIcon} />
-          <Text style={styles.buttonText}>ENCONTRAR PROFISSIONAIS</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.mainButton, styles.btnYellow]}
-          onPress={() => setAbaHome('mapa')}
-        >
-          <Ionicons name="location-outline" size={20} color="#222" style={styles.btnIcon} />
-          <Text style={styles.buttonText}>MAPA INCLUSIVO</Text>
-        </TouchableOpacity>
-
-        <View style={styles.quickAccessContainer}>
-          <Text style={styles.quickAccessTitle}>ACESSO RÁPIDO</Text>
-          <View style={styles.cardRow}>
-            <TouchableOpacity style={styles.card}>
-              <Ionicons name="bookmark-outline" size={22} color="#3E5C5B" />
-              <Text style={styles.cardLabel}>Favoritos</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.card}>
-              <Ionicons name="calendar-outline" size={22} color="#3E5C5B" />
-              <Text style={styles.cardLabel}>Agenda</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.card}>
-              <Ionicons name="book-outline" size={22} color="#3E5C5B" />
-              <Text style={styles.cardLabel}>Guias</Text>
+          <View style={styles.faixaFilhoEditar}>
+            <Text style={styles.faixaFilhoTexto} numberOfLines={2}>
+              {resumoFilhos}
+            </Text>
+            <TouchableOpacity
+              onPress={() => abrirEdicaoFilhos(true)}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Text style={styles.faixaEditarTexto}>EDITAR</Text>
             </TouchableOpacity>
           </View>
-        </View>
-      </ScrollView>
+
+          <View style={styles.listaPerfilContainer}>
+            <TouchableOpacity
+              style={styles.itemPerfil}
+              onPress={() =>
+                abrirOpcaoPerfil(
+                  'HISTÓRICO',
+                  'Visualize suas interações, consultas e atividades recentes na plataforma.'
+                )
+              }
+            >
+              <Text style={styles.itemPerfilTexto}>HISTÓRICO</Text>
+              <Ionicons name="arrow-forward" size={26} color="#111" />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.itemPerfil}
+              onPress={() =>
+                abrirOpcaoPerfil(
+                  'PREFERÊNCIA',
+                  'Personalize suas preferências de rede de apoio, temas e alertas.'
+                )
+              }
+            >
+              <Text style={styles.itemPerfilTexto}>PREFERÊNCIA</Text>
+              <Ionicons name="arrow-forward" size={26} color="#111" />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.itemPerfil}
+              onPress={() =>
+                abrirOpcaoPerfil(
+                  'ACESSIBILIDADE',
+                  'Ajuste recursos de acessibilidade para facilitar seu uso diário.'
+                )
+              }
+            >
+              <Text style={styles.itemPerfilTexto}>ACESSIBILIDADE</Text>
+              <Ionicons name="arrow-forward" size={26} color="#111" />
+            </TouchableOpacity>
+
+            <View style={styles.itemPerfil}>
+              <Text style={styles.itemPerfilTexto}>ANÔNIMO</Text>
+              <Switch
+                value={modoAnonimo}
+                onValueChange={setModoAnonimo}
+                trackColor={{ false: '#D1D5DB', true: '#111' }}
+                thumbColor={modoAnonimo ? '#FFF' : '#111'}
+              />
+            </View>
+
+            <TouchableOpacity
+              style={styles.itemPerfil}
+              onPress={() =>
+                abrirOpcaoPerfil(
+                  'AJUDA',
+                  'Acesse orientações de uso e canais de apoio da equipe Bemvi.'
+                )
+              }
+            >
+              <Text style={styles.itemPerfilTexto}>AJUDA</Text>
+              <Ionicons name="arrow-forward" size={26} color="#111" />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.itemPerfil}
+              onPress={() =>
+                abrirOpcaoPerfil(
+                  'SOBRE',
+                  'Bemvi — Plataforma de acolhimento, conexão e indicação para mães atípicas.'
+                )
+              }
+            >
+              <Text style={styles.itemPerfilTexto}>SOBRE</Text>
+              <Ionicons name="arrow-forward" size={26} color="#111" />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.btnSairPerfil}
+              onPress={handleLogout}
+              disabled={enviandoAuth}
+            >
+              <Ionicons name="log-out-outline" size={20} color="#B91C1C" />
+              <Text style={styles.btnSairPerfilTexto}>
+                {enviandoAuth ? 'SAINDO...' : 'SAIR DA CONTA'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      ) : (
+        <>
+          <Text style={styles.subtitleHome}>Você não está sozinha.</Text>
+
+          <ScrollView
+            style={styles.scrollHome}
+            contentContainerStyle={styles.contentHome}
+            showsVerticalScrollIndicator={false}
+          >
+            <TouchableOpacity
+              style={[styles.mainButton, styles.btnBlue]}
+              onPress={() => setAbaHome('apoio')}
+            >
+              <Ionicons name="heart-outline" size={20} color="#222" style={styles.btnIcon} />
+              <Text style={styles.buttonText}>PRECISO CONVERSAR</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.mainButton, styles.btnGreen]}
+              onPress={() => setAbaHome('profissionais')}
+            >
+              <Ionicons name="medkit-outline" size={20} color="#222" style={styles.btnIcon} />
+              <Text style={styles.buttonText}>ENCONTRAR PROFISSIONAIS</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.mainButton, styles.btnYellow]}
+              onPress={() => setAbaHome('mapa')}
+            >
+              <Ionicons name="location-outline" size={20} color="#222" style={styles.btnIcon} />
+              <Text style={styles.buttonText}>MAPA INCLUSIVO</Text>
+            </TouchableOpacity>
+
+            <View style={styles.quickAccessContainer}>
+              <Text style={styles.quickAccessTitle}>ACESSO RÁPIDO</Text>
+              <View style={styles.cardRow}>
+                <TouchableOpacity style={styles.card}>
+                  <Ionicons name="bookmark-outline" size={22} color="#3E5C5B" />
+                  <Text style={styles.cardLabel}>Favoritos</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.card}>
+                  <Ionicons name="calendar-outline" size={22} color="#3E5C5B" />
+                  <Text style={styles.cardLabel}>Agenda</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.card}>
+                  <Ionicons name="book-outline" size={22} color="#3E5C5B" />
+                  <Text style={styles.cardLabel}>Guias</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </ScrollView>
+        </>
+      )}
 
       {/* Barra de Ícones Fixa no Fim da Tela */}
       <View style={styles.tabBar}>
@@ -721,7 +921,7 @@ export default function App() {
           <Ionicons
             name={abaHome === 'inicio' ? 'home' : 'home-outline'}
             size={22}
-            color={abaHome === 'inicio' ? '#2E7D32' : '#555'}
+            color={abaHome === 'inicio' ? '#111' : '#333'}
           />
           <Text style={[styles.tabText, abaHome === 'inicio' && styles.tabTextAtivo]}>
             Início
@@ -735,7 +935,7 @@ export default function App() {
           <Ionicons
             name={abaHome === 'apoio' ? 'heart' : 'heart-outline'}
             size={22}
-            color={abaHome === 'apoio' ? '#2E7D32' : '#555'}
+            color={abaHome === 'apoio' ? '#111' : '#333'}
           />
           <Text style={[styles.tabText, abaHome === 'apoio' && styles.tabTextAtivo]}>
             Apoio
@@ -749,7 +949,7 @@ export default function App() {
           <Ionicons
             name={abaHome === 'profissionais' ? 'medkit' : 'medkit-outline'}
             size={22}
-            color={abaHome === 'profissionais' ? '#2E7D32' : '#555'}
+            color={abaHome === 'profissionais' ? '#111' : '#333'}
           />
           <Text style={[styles.tabText, abaHome === 'profissionais' && styles.tabTextAtivo]}>
             Profissionais
@@ -763,7 +963,7 @@ export default function App() {
           <Ionicons
             name={abaHome === 'mapa' ? 'map' : 'map-outline'}
             size={22}
-            color={abaHome === 'mapa' ? '#2E7D32' : '#555'}
+            color={abaHome === 'mapa' ? '#111' : '#333'}
           />
           <Text style={[styles.tabText, abaHome === 'mapa' && styles.tabTextAtivo]}>
             Mapa
@@ -777,7 +977,7 @@ export default function App() {
           <Ionicons
             name={abaHome === 'perfil' ? 'person' : 'person-outline'}
             size={22}
-            color={abaHome === 'perfil' ? '#2E7D32' : '#555'}
+            color={abaHome === 'perfil' ? '#111' : '#333'}
           />
           <Text style={[styles.tabText, abaHome === 'perfil' && styles.tabTextAtivo]}>
             Perfil
@@ -1073,17 +1273,17 @@ const styles = StyleSheet.create({
   },
 
   btnVoltar: {
+    marginTop: 18,
     alignItems: 'center',
-    marginTop: 14,
+    paddingVertical: 8,
   },
 
   btnVoltarText: {
-    color: '#666',
-    fontSize: 14,
+    color: '#3E5C5B',
+    fontSize: 15,
     fontWeight: '600',
   },
 
-  // ESTILOS DA HOME COM RODAPÉ FIXO
   containerHome: {
     flex: 1,
     backgroundColor: '#F5F5DC',
@@ -1095,7 +1295,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 20,
     paddingTop: Platform.OS === 'android' ? 45 : 15,
-    paddingBottom: 5,
+    paddingBottom: 8,
+    backgroundColor: '#FFF',
   },
 
   btnSairTopo: {
@@ -1112,6 +1313,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontSize: 14,
     color: '#444',
+    marginTop: 10,
     marginBottom: 20,
   },
 
@@ -1189,6 +1391,118 @@ const styles = StyleSheet.create({
     color: '#3E5C5B',
     fontWeight: '600',
     marginTop: 6,
+  },
+
+  scrollPerfil: {
+    flex: 1,
+    backgroundColor: '#FFF',
+  },
+
+  contentPerfil: {
+    paddingHorizontal: 22,
+    paddingTop: 14,
+    paddingBottom: 28,
+  },
+
+  perfilHeaderCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 18,
+    marginBottom: 24,
+  },
+
+  avatarCirculo: {
+    width: 84,
+    height: 84,
+    borderRadius: 42,
+    borderWidth: 2,
+    borderColor: '#111',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFF',
+  },
+
+  perfilSaudacaoBox: {
+    flex: 1,
+  },
+
+  perfilSaudacaoTexto: {
+    fontSize: 20,
+    fontWeight: '400',
+    color: '#111',
+    letterSpacing: 0.5,
+  },
+
+  perfilSubAnonimo: {
+    fontSize: 12,
+    color: '#2E7D32',
+    marginTop: 4,
+    fontWeight: '600',
+  },
+
+  faixaFilhoEditar: {
+    backgroundColor: '#C5A55A',
+    borderRadius: 14,
+    paddingVertical: 15,
+    paddingHorizontal: 18,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginBottom: 26,
+  },
+
+  faixaFilhoTexto: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#111',
+    letterSpacing: 0.5,
+  },
+
+  faixaEditarTexto: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111',
+    letterSpacing: 0.5,
+  },
+
+  listaPerfilContainer: {
+    gap: 18,
+  },
+
+  itemPerfil: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 2,
+  },
+
+  itemPerfilTexto: {
+    fontSize: 16,
+    fontWeight: '400',
+    color: '#111',
+    letterSpacing: 0.6,
+  },
+
+  btnSairPerfil: {
+    marginTop: 18,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    backgroundColor: '#FEF2F2',
+  },
+
+  btnSairPerfilTexto: {
+    color: '#B91C1C',
+    fontWeight: '700',
+    fontSize: 13,
+    letterSpacing: 0.5,
   },
 
   tabBar: {
