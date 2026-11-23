@@ -15,12 +15,15 @@ import {
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { auth } from './firebaseConfig';
 import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   updateProfile,
+  updateEmail,
   signOut,
+  deleteUser,
   onAuthStateChanged,
 } from 'firebase/auth';
 
@@ -80,9 +83,11 @@ function mensagemErroAuth(code) {
     case 'auth/invalid-email':
       return 'O formato do e-mail informado é inválido.';
     case 'auth/user-not-found':
+      return 'Usuário não cadastrado. Crie uma conta para acessar.';
     case 'auth/wrong-password':
+      return 'Senha incorreta. Verifique e tente novamente.';
     case 'auth/invalid-credential':
-      return 'E-mail ou senha incorretos. Verifique seus dados e tente novamente.';
+      return 'Usuário não cadastrado ou e-mail/senha incorretos.';
     case 'auth/user-disabled':
       return 'Esta conta foi desativada. Entre em contato com o suporte.';
     case 'auth/too-many-requests':
@@ -95,29 +100,41 @@ function mensagemErroAuth(code) {
       return 'Sem conexão com a internet. Verifique sua rede e tente novamente.';
     case 'auth/operation-not-allowed':
       return 'O login por e-mail e senha não está habilitado no Firebase.';
+    case 'auth/requires-recent-login':
+      return 'Por segurança, faça login novamente para concluir alterações sensíveis na conta.';
     default:
       return 'Não foi possível concluir a operação. Tente novamente.';
   }
 }
 
+const getChavePerfilUsuario = (uid) => `@bemvi:perfil:${uid || 'convidado'}`;
+
 export default function App() {
-  // 'welcome' | 'login' | 'cadastro' | 'cadastro_filhos' | 'home'
+  // 'welcome' | 'login' | 'cadastro' | 'cadastro_filhos' | 'editar_mae' | 'home' | 'perfil_excluido'
   const [telaAtual, setTelaAtual] = useState('welcome');
-  const [abaHome, setAbaHome] = useState('inicio'); // 'inicio' | 'apoio' | 'profissionais' | 'mapa' | 'perfil'
+  // 'inicio' | 'bem_vindo_mae' | 'apoio' | 'profissionais' | 'mapa' | 'perfil'
+  const [abaHome, setAbaHome] = useState('inicio');
   const [editandoFilhosPeloPerfil, setEditandoFilhosPeloPerfil] = useState(false);
 
+  // Controla se a mãe atípica realizou o cadastro e habilita a tela "BEM-VINDO!"
+  const [cadastrouMaeAtipica, setCadastrouMaeAtipica] = useState(false);
+  const [maesOnline] = useState(12);
+
   const [nome, setNome] = useState('');
-  const [tipos, setTipos] = useState({
-    TDAH: false,
-    TEA: false,
-    TOD: false,
-    OUTROS: false,
-  });
   const [email, setEmail] = useState('');
   const [senha, setSenha] = useState('');
   const [mostrarSenha, setMostrarSenha] = useState(false);
+  const [avisoNaoCadastrado, setAvisoNaoCadastrado] = useState('');
   const [initializing, setInitializing] = useState(true);
   const [enviandoAuth, setEnviandoAuth] = useState(false);
+  const [excluindoPerfil, setExcluindoPerfil] = useState(false);
+  const [pedirConfirmacaoExclusao, setPedirConfirmacaoExclusao] = useState(false);
+  const [confirmacaoExclusao, setConfirmacaoExclusao] = useState(null);
+
+  // Campos temporários para correção do cadastro da mãe
+  const [nomeEdit, setNomeEdit] = useState('');
+  const [emailEdit, setEmailEdit] = useState('');
+  const [salvandoMae, setSalvandoMae] = useState(false);
 
   // Estado para múltiplos filhos
   const [filhos, setFilhos] = useState([criarFilhoVazio()]);
@@ -125,19 +142,154 @@ export default function App() {
   // Estado do modo anônimo no perfil
   const [modoAnonimo, setModoAnonimo] = useState(false);
 
+  const persistirDadosPerfil = async (
+    listaFilhos = filhos,
+    nomeMae = nome,
+    anonimo = modoAnonimo,
+    cadastroMae = cadastrouMaeAtipica,
+    uidOverride = null
+  ) => {
+    try {
+      const uid = uidOverride || auth.currentUser?.uid || 'convidado';
+      const payload = {
+        nome: (nomeMae || '').trim(),
+        filhos: listaFilhos,
+        modoAnonimo: Boolean(anonimo),
+        cadastrouMaeAtipica: Boolean(cadastroMae),
+        atualizadoEm: new Date().toISOString(),
+      };
+      await AsyncStorage.setItem(getChavePerfilUsuario(uid), JSON.stringify(payload));
+    } catch (err) {
+      console.log('Erro ao salvar dados do perfil:', err);
+    }
+  };
+
+  const limparEstadoSessao = () => {
+    setNome('');
+    setEmail('');
+    setSenha('');
+    setMostrarSenha(false);
+    setAvisoNaoCadastrado('');
+    setModoAnonimo(false);
+    setCadastrouMaeAtipica(false);
+    setEditandoFilhosPeloPerfil(false);
+    setPedirConfirmacaoExclusao(false);
+    setFilhos([criarFilhoVazio()]);
+    setAbaHome('inicio');
+    setTelaAtual('welcome');
+  };
+
   useEffect(() => {
-    const subscriber = onAuthStateChanged(auth, (user) => {
+    const subscriber = onAuthStateChanged(auth, async (user) => {
       if (user) {
-        setTelaAtual((prev) => (prev === 'cadastro_filhos' ? prev : 'home'));
+        try {
+          const salvo = await AsyncStorage.getItem(getChavePerfilUsuario(user.uid));
+          if (salvo) {
+            const dados = JSON.parse(salvo);
+            if (dados.nome) setNome(dados.nome);
+            if (typeof dados.modoAnonimo === 'boolean') setModoAnonimo(dados.modoAnonimo);
+            if (typeof dados.cadastrouMaeAtipica === 'boolean') {
+              setCadastrouMaeAtipica(dados.cadastrouMaeAtipica);
+            }
+            if (Array.isArray(dados.filhos) && dados.filhos.length > 0) {
+              setFilhos(dados.filhos);
+            }
+          }
+          if (user.email) setEmail(user.email);
+          if (user.displayName && !nome) setNome(user.displayName);
+        } catch (err) {
+          console.log('Erro ao carregar dados do perfil:', err);
+        }
+
+        setTelaAtual((prev) =>
+          prev === 'cadastro_filhos' || prev === 'editar_mae' || prev === 'perfil_excluido'
+            ? prev
+            : 'home'
+        );
       } else {
         setTelaAtual((prev) =>
-          prev === 'home' || prev === 'cadastro_filhos' ? 'welcome' : prev
+          prev === 'home' || prev === 'cadastro_filhos' || prev === 'editar_mae'
+            ? 'welcome'
+            : prev
         );
       }
       if (initializing) setInitializing(false);
     });
     return subscriber;
   }, [initializing]);
+
+  const abrirCorrecaoMae = () => {
+    const nomeAtual =
+      nome.trim() ||
+      auth.currentUser?.displayName?.trim() ||
+      (auth.currentUser?.email ? auth.currentUser.email.split('@')[0] : '') ||
+      '';
+    const emailAtual = email.trim() || auth.currentUser?.email || '';
+
+    setNomeEdit(nomeAtual);
+    setEmailEdit(emailAtual);
+    setTelaAtual('editar_mae');
+  };
+
+  const handleSalvarCorrecaoMae = async () => {
+    if (salvandoMae) return;
+
+    const nomeLimpo = nomeEdit.trim();
+    const emailLimpo = emailEdit.trim();
+
+    if (!nomeLimpo) {
+      Alert.alert('Atenção', 'Por favor, informe o seu nome.');
+      return;
+    }
+
+    if (!emailLimpo || !emailLimpo.includes('@')) {
+      Alert.alert('Atenção', 'Por favor, informe um e-mail válido.');
+      return;
+    }
+
+    setSalvandoMae(true);
+    let avisoEmail = '';
+
+    try {
+      const currentUser = auth.currentUser;
+
+      if (currentUser) {
+        try {
+          await updateProfile(currentUser, { displayName: nomeLimpo });
+        } catch (profileErr) {
+          console.log('Aviso ao atualizar displayName:', profileErr);
+        }
+
+        if (currentUser.email && emailLimpo.toLowerCase() !== currentUser.email.toLowerCase()) {
+          try {
+            await updateEmail(currentUser, emailLimpo);
+          } catch (emailErr) {
+            console.log('Aviso ao atualizar e-mail no Auth:', emailErr.code, emailErr.message);
+            avisoEmail = `\n\nNota: ${mensagemErroAuth(emailErr.code)}`;
+          }
+        }
+      }
+
+      setNome(nomeLimpo);
+      setEmail(emailLimpo);
+
+      await persistirDadosPerfil(
+        filhos,
+        nomeLimpo,
+        modoAnonimo,
+        cadastrouMaeAtipica
+      );
+
+      Alert.alert('Cadastro atualizado!', `Seus dados foram salvos com sucesso.${avisoEmail}`);
+      setAbaHome('perfil');
+      setTelaAtual('home');
+    } catch (err) {
+      console.log('Erro ao salvar correção da mãe:', err);
+      Alert.alert('Erro', 'Não foi possível salvar as alterações do cadastro.');
+    } finally {
+      setSalvandoMae(false);
+    }
+  };
 
   const adicionarFilho = () => {
     setFilhos((prev) => [...prev, criarFilhoVazio()]);
@@ -187,31 +339,58 @@ export default function App() {
     setTelaAtual('cadastro_filhos');
   };
 
-  const concluirCadastroFilhos = (destinoAba = 'inicio') => {
+  const concluirCadastroFilhos = (destinoAba = 'bem_vindo_mae') => {
     setEditandoFilhosPeloPerfil(false);
     setAbaHome(destinoAba);
     setTelaAtual('home');
   };
 
+  const handleAlternarAnonimo = async (valor) => {
+    setModoAnonimo(valor);
+    await persistirDadosPerfil(filhos, nome, valor, cadastrouMaeAtipica);
+  };
+
   const handleLogin = async () => {
     if (enviandoAuth) return;
 
+    setAvisoNaoCadastrado('');
     const emailLimpo = email.trim();
     const senhaLimpa = senha.trim();
 
     if (!emailLimpo || !senhaLimpa) {
-      Alert.alert('Atenção', 'Por favor, preencha o e-mail e a senha.');
+      setAvisoNaoCadastrado('Preencha o e-mail e a senha para acessar.');
       return;
     }
 
     setEnviandoAuth(true);
     try {
-      await signInWithEmailAndPassword(auth, emailLimpo, senhaLimpa);
-      setAbaHome('inicio');
+      const cred = await signInWithEmailAndPassword(auth, emailLimpo, senhaLimpa);
+      let abrirBemVindo = false;
+
+      try {
+        const salvo = await AsyncStorage.getItem(getChavePerfilUsuario(cred.user.uid));
+        if (salvo) {
+          const dados = JSON.parse(salvo);
+          if (dados.nome) setNome(dados.nome);
+          if (typeof dados.modoAnonimo === 'boolean') setModoAnonimo(dados.modoAnonimo);
+          if (typeof dados.cadastrouMaeAtipica === 'boolean') {
+            setCadastrouMaeAtipica(dados.cadastrouMaeAtipica);
+            abrirBemVindo = dados.cadastrouMaeAtipica;
+          }
+          if (Array.isArray(dados.filhos) && dados.filhos.length > 0) {
+            setFilhos(dados.filhos);
+          }
+        }
+      } catch (err) {
+        console.log('Erro ao ler perfil no login:', err);
+      }
+
+      setAvisoNaoCadastrado('');
+      setAbaHome(abrirBemVindo ? 'bem_vindo_mae' : 'inicio');
       setTelaAtual('home');
     } catch (error) {
-      console.log('Erro no Login:', error.code, error.message);
-      Alert.alert('Erro no Login', mensagemErroAuth(error.code));
+      console.log('Erro no Login:', error?.code, error?.message);
+      setAvisoNaoCadastrado(mensagemErroAuth(error?.code));
     } finally {
       setEnviandoAuth(false);
     }
@@ -244,11 +423,20 @@ export default function App() {
         console.log('Aviso ao atualizar perfil:', profileError.code, profileError.message);
       }
 
-      const tiposSelecionados = Object.keys(tipos).filter((chave) => tipos[chave]);
-      console.log('Conta criada:', userCredential.user.uid, 'Tipos:', tiposSelecionados);
-
-      setFilhos([criarFilhoVazio()]);
+      const filhosIniciais = [criarFilhoVazio()];
+      setCadastrouMaeAtipica(true);
+      setFilhos(filhosIniciais);
       setEditandoFilhosPeloPerfil(false);
+      setAvisoNaoCadastrado('');
+
+      await persistirDadosPerfil(
+        filhosIniciais,
+        nomeLimpo,
+        modoAnonimo,
+        true,
+        userCredential.user.uid
+      );
+
       Alert.alert(
         'Conta criada!',
         'Agora adicione as informações dos seus filhos para personalizar seu acolhimento.'
@@ -267,6 +455,7 @@ export default function App() {
               text: 'Ir para Login',
               onPress: () => {
                 setMostrarSenha(false);
+                setAvisoNaoCadastrado('');
                 setTelaAtual('login');
               },
             },
@@ -280,7 +469,7 @@ export default function App() {
     }
   };
 
-  const handleSalvarFilhos = () => {
+  const handleSalvarFilhos = async () => {
     const filhosValidos = filhos.filter((f) => f.nome.trim().length > 0);
 
     if (filhosValidos.length === 0) {
@@ -292,6 +481,7 @@ export default function App() {
     }
 
     const dadosFormatados = filhosValidos.map((f) => ({
+      id: f.id || `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       nome: f.nome.trim(),
       dataNascimento: f.dataNascimento.trim(),
       idade: f.idade.trim() || calcularIdadeDeDataBR(f.dataNascimento),
@@ -299,27 +489,26 @@ export default function App() {
       outraDificuldade: f.outraDificuldade.trim(),
     }));
 
-    console.log('Filhos cadastrados:', dadosFormatados);
+    setFilhos(dadosFormatados);
+    await persistirDadosPerfil(dadosFormatados, nome, modoAnonimo, cadastrouMaeAtipica);
+
     Alert.alert('Tudo certo!', `${dadosFormatados.length} filho(a)(s) registrado(s) com sucesso.`);
-    concluirCadastroFilhos(editandoFilhosPeloPerfil ? 'perfil' : 'inicio');
+    concluirCadastroFilhos(
+      editandoFilhosPeloPerfil
+        ? 'perfil'
+        : cadastrouMaeAtipica
+        ? 'bem_vindo_mae'
+        : 'inicio'
+    );
   };
 
   const handleLogout = async () => {
-    if (enviandoAuth) return;
+    if (enviandoAuth || excluindoPerfil) return;
 
     setEnviandoAuth(true);
     try {
       await signOut(auth);
-      setNome('');
-      setTipos({ TDAH: false, TEA: false, TOD: false, OUTROS: false });
-      setEmail('');
-      setSenha('');
-      setMostrarSenha(false);
-      setModoAnonimo(false);
-      setEditandoFilhosPeloPerfil(false);
-      setFilhos([criarFilhoVazio()]);
-      setAbaHome('inicio');
-      setTelaAtual('welcome');
+      limparEstadoSessao();
     } catch (error) {
       console.log('Erro ao sair:', error.code, error.message);
       Alert.alert('Erro ao sair', mensagemErroAuth(error.code));
@@ -328,7 +517,138 @@ export default function App() {
     }
   };
 
-  // TELA 1: BOAS-VINDAS
+  const executarExclusaoPerfil = async () => {
+    if (excluindoPerfil) return;
+    setExcluindoPerfil(true);
+    setPedirConfirmacaoExclusao(false);
+
+    const currentUser = auth.currentUser;
+    const uidAtual = currentUser?.uid || 'convidado';
+    const chavePrincipal = getChavePerfilUsuario(uidAtual);
+
+    let localRemovido = false;
+    let contaAuthRemovida = false;
+    let exigiuReautenticacao = false;
+    let erroAuthDetalhe = '';
+
+    try {
+      await AsyncStorage.removeItem(chavePrincipal);
+      if (uidAtual !== 'convidado') {
+        await AsyncStorage.removeItem(getChavePerfilUsuario('convidado'));
+      }
+      const restante = await AsyncStorage.getItem(chavePrincipal);
+      localRemovido = restante === null;
+    } catch (storageErr) {
+      console.log('Erro ao remover dados locais do perfil:', storageErr);
+      localRemovido = false;
+    }
+
+    if (currentUser) {
+      try {
+        await deleteUser(currentUser);
+        contaAuthRemovida = true;
+      } catch (authErr) {
+        console.log('Erro ao excluir usuário no Auth:', authErr?.code, authErr?.message);
+        contaAuthRemovida = false;
+
+        if (authErr?.code === 'auth/requires-recent-login') {
+          exigiuReautenticacao = true;
+          erroAuthDetalhe =
+            'A conta no Firebase exige login recente para ser excluída permanentemente.';
+          try {
+            await signOut(auth);
+          } catch (signOutErr) {
+            console.log('Erro ao encerrar sessão após requires-recent-login:', signOutErr);
+          }
+        } else {
+          erroAuthDetalhe = mensagemErroAuth(authErr?.code);
+        }
+      }
+    } else {
+      contaAuthRemovida = true;
+    }
+
+    const agora = new Date();
+    const dataHoraFormatada = `${agora.toLocaleDateString('pt-BR')} às ${agora.toLocaleTimeString(
+      'pt-BR',
+      { hour: '2-digit', minute: '2-digit' }
+    )}`;
+
+    const resumoConfirmacao = {
+      localRemovido,
+      contaAuthRemovida,
+      exigiuReautenticacao,
+      erroAuthDetalhe,
+      uidRemovido: uidAtual,
+      dataHora: dataHoraFormatada,
+    };
+
+    limparEstadoSessao();
+    setConfirmacaoExclusao(resumoConfirmacao);
+    setTelaAtual('perfil_excluido');
+    setExcluindoPerfil(false);
+  };
+
+  // TELA DE CONFIRMAÇÃO DE EXCLUSÃO DE PERFIL
+  if (telaAtual === 'perfil_excluido' && confirmacaoExclusao) {
+    const tudoExcluido =
+      confirmacaoExclusao.localRemovido && confirmacaoExclusao.contaAuthRemovida;
+
+    return (
+      <SafeAreaView style={styles.containerFilhos}>
+        <View style={styles.loginContent}>
+          <Text style={styles.loginTitle}>
+            {tudoExcluido ? 'PERFIL EXCLUÍDO' : 'EXCLUSÃO REGISTRADA'}
+          </Text>
+          <Text style={styles.loginSubtitle}>
+            {tudoExcluido
+              ? 'Confirmamos que o perfil e os dados associados foram removidos.'
+              : 'Confira abaixo o status de cada etapa da exclusão:'}
+          </Text>
+
+          <View style={styles.cardFilho}>
+            <Text style={styles.cartaoFilhoNome}>Comprovante de ação</Text>
+            <Text style={styles.cartaoFilhoDetalhe}>
+              Data/Hora: {confirmacaoExclusao.dataHora}
+            </Text>
+            <Text style={styles.cartaoFilhoDetalhe}>
+              Identificador: {confirmacaoExclusao.uidRemovido}
+            </Text>
+            <Text style={styles.cartaoFilhoDetalhe}>
+              Dados locais (AsyncStorage):{' '}
+              {confirmacaoExclusao.localRemovido
+                ? 'Excluídos e verificados'
+                : 'Falha na remoção'}
+            </Text>
+            <Text style={styles.cartaoFilhoDetalhe}>
+              Conta de autenticação:{' '}
+              {confirmacaoExclusao.contaAuthRemovida
+                ? 'Excluída'
+                : 'Pendente (exige login recente)'}
+            </Text>
+            {confirmacaoExclusao.erroAuthDetalhe ? (
+              <Text style={styles.textoRemoverFilho}>
+                {confirmacaoExclusao.erroAuthDetalhe}
+              </Text>
+            ) : null}
+          </View>
+
+          <TouchableOpacity
+            style={styles.btnLogin}
+            onPress={() => {
+              setConfirmacaoExclusao(null);
+              setTelaAtual('welcome');
+            }}
+          >
+            <Text style={styles.btnLoginText}>VOLTAR AO INÍCIO</Text>
+          </TouchableOpacity>
+        </View>
+        <StatusBar style="auto" />
+      </SafeAreaView>
+    );
+  }
+
+  // TELA 1: APRESENTACAO
   if (telaAtual === 'welcome') {
     return (
       <View style={styles.containerWelcome}>
@@ -377,7 +697,10 @@ export default function App() {
               placeholder="Digite o seu e-mail"
               placeholderTextColor="#888"
               value={email}
-              onChangeText={setEmail}
+              onChangeText={(texto) => {
+                setEmail(texto);
+                if (avisoNaoCadastrado) setAvisoNaoCadastrado('');
+              }}
               keyboardType="email-address"
               autoCapitalize="none"
             />
@@ -391,7 +714,10 @@ export default function App() {
                 placeholder="Digite a sua senha"
                 placeholderTextColor="#888"
                 value={senha}
-                onChangeText={setSenha}
+                onChangeText={(texto) => {
+                  setSenha(texto);
+                  if (avisoNaoCadastrado) setAvisoNaoCadastrado('');
+                }}
                 secureTextEntry={!mostrarSenha}
               />
               <TouchableOpacity
@@ -406,6 +732,23 @@ export default function App() {
               </TouchableOpacity>
             </View>
           </View>
+
+          {avisoNaoCadastrado ? (
+            <View style={styles.caixaAvisoNaoCadastrado}>
+              <Text style={styles.textoAvisoNaoCadastrado}>{avisoNaoCadastrado}</Text>
+              <TouchableOpacity
+                onPress={() => {
+                  setMostrarSenha(false);
+                  setAvisoNaoCadastrado('');
+                  setTelaAtual('cadastro');
+                }}
+              >
+                <Text style={styles.linkCriarContaAviso}>
+                  Não possui conta? Criar cadastro agora →
+                </Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
 
           <TouchableOpacity
             style={[styles.btnLogin, enviandoAuth && styles.btnDesabilitado]}
@@ -423,6 +766,7 @@ export default function App() {
             style={styles.btnVerdeDestaque}
             onPress={() => {
               setMostrarSenha(false);
+              setAvisoNaoCadastrado('');
               setTelaAtual('cadastro');
             }}
           >
@@ -431,7 +775,10 @@ export default function App() {
 
           <TouchableOpacity
             style={styles.btnVoltar}
-            onPress={() => setTelaAtual('welcome')}
+            onPress={() => {
+              setAvisoNaoCadastrado('');
+              setTelaAtual('welcome');
+            }}
           >
             <Text style={styles.btnVoltarText}>← Voltar</Text>
           </TouchableOpacity>
@@ -520,6 +867,7 @@ export default function App() {
               style={styles.btnVerdeDestaque}
               onPress={() => {
                 setMostrarSenha(false);
+                setAvisoNaoCadastrado('');
                 setTelaAtual('login');
               }}
             >
@@ -530,6 +878,77 @@ export default function App() {
 
         <StatusBar style="auto" />
       </KeyboardAvoidingView>
+    );
+  }
+
+  // TELA 2.1B: CORRIGIR CADASTRO DA MÃE ATÍPICA (APENAS DADOS DA MÃE)
+  if (telaAtual === 'editar_mae') {
+    return (
+      <SafeAreaView style={styles.containerFilhos}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={{ flex: 1 }}
+        >
+          <ScrollView
+            contentContainerStyle={styles.scrollFilhos}
+            showsVerticalScrollIndicator={false}
+          >
+            <View style={styles.loginContent}>
+              <Text style={styles.loginTitle}>CORRIGIR CADASTRO</Text>
+              <Text style={styles.loginSubtitle}>
+                Atualize seus dados pessoais para manter seu perfil correto.
+              </Text>
+
+              <View style={styles.cardFilho}>
+                <View style={styles.inputContainer}>
+                  <Text style={styles.inputLabel}>Nome completo</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Digite seu nome completo"
+                    placeholderTextColor="#888"
+                    value={nomeEdit}
+                    onChangeText={setNomeEdit}
+                  />
+                </View>
+
+                <View style={styles.inputContainer}>
+                  <Text style={styles.inputLabel}>E-mail</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Digite seu e-mail"
+                    placeholderTextColor="#888"
+                    value={emailEdit}
+                    onChangeText={setEmailEdit}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                  />
+                </View>
+              </View>
+
+              <TouchableOpacity
+                style={[styles.btnLogin, salvandoMae && styles.btnDesabilitado]}
+                onPress={handleSalvarCorrecaoMae}
+                disabled={salvandoMae}
+              >
+                <Text style={styles.btnLoginText}>
+                  {salvandoMae ? 'SALVANDO...' : 'SALVAR ALTERAÇÕES'}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.btnVoltar}
+                onPress={() => {
+                  setAbaHome('perfil');
+                  setTelaAtual('home');
+                }}
+              >
+                <Text style={styles.btnVoltarText}>← Voltar ao perfil</Text>
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
+        <StatusBar style="auto" />
+      </SafeAreaView>
     );
   }
 
@@ -606,7 +1025,7 @@ export default function App() {
                   </View>
 
                   <View style={styles.tiposContainer}>
-                    <Text style={styles.inputLabel}>Dificuldade / Neurodivergência</Text>
+                    <Text style={styles.inputLabel}>Identificação / Neurodivergências</Text>
                     <View style={styles.chipsWrapper}>
                       {OPCOES_DIFICULDADE.map((opcao) => {
                         const selecionado = filho.dificuldades.includes(opcao);
@@ -652,7 +1071,13 @@ export default function App() {
               <TouchableOpacity
                 style={styles.btnVoltar}
                 onPress={() =>
-                  concluirCadastroFilhos(editandoFilhosPeloPerfil ? 'perfil' : 'inicio')
+                  concluirCadastroFilhos(
+                    editandoFilhosPeloPerfil
+                      ? 'perfil'
+                      : cadastrouMaeAtipica
+                      ? 'bem_vindo_mae'
+                      : 'inicio'
+                  )
                 }
               >
                 <Text style={styles.btnVoltarText}>
@@ -667,26 +1092,31 @@ export default function App() {
     );
   }
 
-  // TELA 3: HOME / PAINEL PRINCIPAL & ABAS
+  // TELA 3: HOME / BEM-VINDO! / PERFIL
   const nomeExibicao = (
-    auth.currentUser?.displayName ||
     nome ||
+    auth.currentUser?.displayName ||
     (auth.currentUser?.email ? auth.currentUser.email.split('@')[0] : '') ||
     'MARIA'
   ).toUpperCase();
 
+  const filhosCadastrados = filhos.filter((f) => (f.nome || '').trim().length > 0);
+
   const resumoFilhos = (() => {
     const validos = filhos.filter(
-      (f) => f.nome.trim() || f.dificuldades.length > 0 || f.outraDificuldade.trim()
+      (f) =>
+        (f.nome || '').trim() ||
+        (f.dificuldades && f.dificuldades.length > 0) ||
+        (f.outraDificuldade || '').trim()
     );
     if (validos.length === 0) return 'FILHO, TEA';
 
     return validos
       .map((f) => {
-        const tags = [...f.dificuldades];
-        if (f.outraDificuldade.trim()) tags.push(f.outraDificuldade.trim().toUpperCase());
+        const tags = [...(f.dificuldades || [])];
+        if ((f.outraDificuldade || '').trim()) tags.push(f.outraDificuldade.trim().toUpperCase());
         const sufixo = tags.length > 0 ? tags.join(', ') : 'FILHO(A)';
-        return f.nome.trim() ? `${f.nome.trim().toUpperCase()} (${sufixo})` : sufixo;
+        return (f.nome || '').trim() ? `${f.nome.trim().toUpperCase()} (${sufixo})` : sufixo;
       })
       .join(' • ');
   })();
@@ -694,6 +1124,8 @@ export default function App() {
   const abrirOpcaoPerfil = (titulo, mensagem) => {
     Alert.alert(titulo, mensagem);
   };
+
+  const mostrarTelaBemVindoMae = abaHome === 'bem_vindo_mae' && cadastrouMaeAtipica;
 
   return (
     <SafeAreaView style={styles.containerHome}>
@@ -707,10 +1139,23 @@ export default function App() {
             )
           }
         >
-          <Ionicons name="menu-outline" size={28} color="#3E5C5B" />
+          <Ionicons name="menu-outline" size={28} color="#111" />
         </TouchableOpacity>
 
-        {abaHome === 'perfil' ? (
+        {abaHome === 'inicio' && !cadastrouMaeAtipica && (
+          <Text style={styles.logoTextHome}>Bemvi</Text>
+        )}
+
+        <View style={styles.headerRightGroup}>
+          {!cadastrouMaeAtipica && (
+            <TouchableOpacity
+              onPress={handleLogout}
+              style={styles.btnSairTopo}
+              disabled={enviandoAuth || excluindoPerfil}
+            >
+              <Ionicons name="log-out-outline" size={20} color="#B91C1C" />
+            </TouchableOpacity>
+          )}
           <TouchableOpacity
             onPress={() =>
               Alert.alert('Notificações', 'Nenhuma nova notificação no momento.')
@@ -718,18 +1163,7 @@ export default function App() {
           >
             <Ionicons name="notifications" size={26} color="#111" />
           </TouchableOpacity>
-        ) : (
-          <>
-            <Text style={styles.logoTextHome}>Bemvi</Text>
-            <TouchableOpacity
-              onPress={handleLogout}
-              style={styles.btnSairTopo}
-              disabled={enviandoAuth}
-            >
-              <Ionicons name="log-out-outline" size={22} color="#B91C1C" />
-            </TouchableOpacity>
-          </>
-        )}
+        </View>
       </View>
 
       {abaHome === 'perfil' ? (
@@ -750,11 +1184,21 @@ export default function App() {
               <Text style={styles.perfilSaudacaoTexto}>
                 OLÁ! {modoAnonimo ? 'ANÔNIMA' : nomeExibicao}
               </Text>
+              {email ? (
+                <Text style={styles.perfilEmailTexto}>{email}</Text>
+              ) : null}
               {modoAnonimo && (
                 <Text style={styles.perfilSubAnonimo}>
                   Identidade ocultada na comunidade
                 </Text>
               )}
+              <TouchableOpacity
+                style={styles.btnCorrigirMae}
+                onPress={abrirCorrecaoMae}
+              >
+                <Ionicons name="create-outline" size={16} color="#3E5C5B" />
+                <Text style={styles.btnCorrigirMaeTexto}>Corrigir meu cadastro</Text>
+              </TouchableOpacity>
             </View>
           </View>
 
@@ -768,6 +1212,40 @@ export default function App() {
             >
               <Text style={styles.faixaEditarTexto}>EDITAR</Text>
             </TouchableOpacity>
+          </View>
+
+          {/* Filhos salvos consultados no Perfil */}
+          <View style={styles.blocoFilhosPerfil}>
+            <Text style={styles.blocoFilhosTitulo}>FILHOS CADASTRADOS</Text>
+            {filhosCadastrados.length === 0 ? (
+              <Text style={styles.semFilhosTexto}>
+                Nenhum filho salvo ainda. Toque em EDITAR para adicionar.
+              </Text>
+            ) : (
+              filhosCadastrados.map((f) => {
+                const tags = [...(f.dificuldades || [])];
+                if ((f.outraDificuldade || '').trim()) tags.push(f.outraDificuldade.trim());
+                const idadeTexto = f.idade || calcularIdadeDeDataBR(f.dataNascimento || '');
+                const detalhe = [
+                  idadeTexto,
+                  f.dataNascimento ? `Nasc.: ${f.dataNascimento}` : '',
+                ]
+                  .filter(Boolean)
+                  .join(' • ');
+
+                return (
+                  <View key={f.id} style={styles.cartaoFilhoPerfil}>
+                    <Text style={styles.cartaoFilhoNome}>{f.nome}</Text>
+                    {detalhe ? (
+                      <Text style={styles.cartaoFilhoDetalhe}>{detalhe}</Text>
+                    ) : null}
+                    {tags.length > 0 && (
+                      <Text style={styles.cartaoFilhoTags}>{tags.join(', ')}</Text>
+                    )}
+                  </View>
+                );
+              })
+            )}
           </View>
 
           <View style={styles.listaPerfilContainer}>
@@ -814,7 +1292,7 @@ export default function App() {
               <Text style={styles.itemPerfilTexto}>ANÔNIMO</Text>
               <Switch
                 value={modoAnonimo}
-                onValueChange={setModoAnonimo}
+                onValueChange={handleAlternarAnonimo}
                 trackColor={{ false: '#D1D5DB', true: '#111' }}
                 thumbColor={modoAnonimo ? '#FFF' : '#111'}
               />
@@ -849,82 +1327,179 @@ export default function App() {
             <TouchableOpacity
               style={styles.btnSairPerfil}
               onPress={handleLogout}
-              disabled={enviandoAuth}
+              disabled={enviandoAuth || excluindoPerfil}
             >
               <Ionicons name="log-out-outline" size={20} color="#B91C1C" />
               <Text style={styles.btnSairPerfilTexto}>
                 {enviandoAuth ? 'SAINDO...' : 'SAIR DA CONTA'}
               </Text>
             </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.btnExcluirPerfil, excluindoPerfil && styles.btnDesabilitado]}
+              onPress={() => setPedirConfirmacaoExclusao((prev) => !prev)}
+              disabled={excluindoPerfil || enviandoAuth}
+            >
+              <Ionicons name="trash-outline" size={20} color="#FFF" />
+              <Text style={styles.btnExcluirPerfilTexto}>
+                {excluindoPerfil ? 'EXCLUINDO PERFIL...' : 'EXCLUIR PERFIL'}
+              </Text>
+            </TouchableOpacity>
+
+            {pedirConfirmacaoExclusao && (
+              <View style={styles.caixaConfirmacaoExclusao}>
+                <Text style={styles.tituloConfirmacaoExclusao}>
+                  Confirmar exclusão permanente?
+                </Text>
+                <Text style={styles.textoConfirmacaoExclusao}>
+                  Isso removerá seu perfil e os dados dos filhos cadastrados.
+                </Text>
+                <View style={styles.botoesConfirmacaoRow}>
+                  <TouchableOpacity
+                    style={styles.btnCancelarExclusao}
+                    onPress={() => setPedirConfirmacaoExclusao(false)}
+                  >
+                    <Text style={styles.btnCancelarExclusaoTexto}>Cancelar</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.btnConfirmarExclusao}
+                    onPress={executarExclusaoPerfil}
+                  >
+                    <Text style={styles.btnConfirmarExclusaoTexto}>Sim, excluir</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+          </View>
+        </ScrollView>
+      ) : mostrarTelaBemVindoMae ? (
+        // TELA "BEM-VINDO!" (SÓ APARECE QUANDO A MÃE ATÍPICA SE CADASTROU)
+        <ScrollView
+          style={styles.scrollBemVindo}
+          contentContainerStyle={styles.contentBemVindo}
+          showsVerticalScrollIndicator={false}
+        >
+          <Text style={styles.tituloSejaBemVinda}>SEJA BEM VINDA!</Text>
+
+          <View style={styles.maesOnlineRow}>
+            <Text style={styles.maesOnlineTexto}>Mães Online</Text>
+            <View style={styles.bolinhaOnline} />
+            <Text style={styles.maesOnlineNumero}>{maesOnline}</Text>
+          </View>
+
+          <TouchableOpacity
+            style={styles.btnAcaoAzul}
+            onPress={() => setAbaHome('apoio')}
+          >
+            <Text style={styles.btnAcaoTexto}>PRECISO CONVERSAR</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.btnAcaoVerde}
+            onPress={() => setAbaHome('profissionais')}
+          >
+            <Text style={styles.btnAcaoTexto}>ENCONTRAR PROFISSIONAL</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.btnAcaoOuro}
+            onPress={() => setAbaHome('mapa')}
+          >
+            <Text style={styles.btnAcaoTexto}>MAPA INCLUSIVO</Text>
+          </TouchableOpacity>
+
+          <View style={styles.acessoRapidoBox}>
+            <Text style={styles.acessoRapidoTitulo}>ACESSO RÁPIDO</Text>
+            <View style={styles.acessoRapidoGrid}>
+              <TouchableOpacity
+                style={styles.quadradoAcessoRapido}
+                onPress={() => Alert.alert('Favoritos', 'Atalho de favoritos.')}
+              />
+              <TouchableOpacity
+                style={styles.quadradoAcessoRapido}
+                onPress={() => Alert.alert('Agenda', 'Atalho da agenda.')}
+              />
+              <TouchableOpacity
+                style={styles.quadradoAcessoRapido}
+                onPress={() => Alert.alert('Guias', 'Atalho de guias.')}
+              />
+            </View>
           </View>
         </ScrollView>
       ) : (
-        <>
+        // TELA "HOME"
+        <ScrollView
+          style={styles.scrollHome}
+          contentContainerStyle={styles.contentHome}
+          showsVerticalScrollIndicator={false}
+        >
           <Text style={styles.subtitleHome}>Você não está sozinha.</Text>
 
-          <ScrollView
-            style={styles.scrollHome}
-            contentContainerStyle={styles.contentHome}
-            showsVerticalScrollIndicator={false}
+          <View style={styles.espacoSuperiorHome} />
+
+          <TouchableOpacity
+            style={styles.btnAcaoAzul}
+            onPress={() => setAbaHome('apoio')}
           >
-            <TouchableOpacity
-              style={[styles.mainButton, styles.btnBlue]}
-              onPress={() => setAbaHome('apoio')}
-            >
-              <Ionicons name="heart-outline" size={20} color="#222" style={styles.btnIcon} />
-              <Text style={styles.buttonText}>PRECISO CONVERSAR</Text>
-            </TouchableOpacity>
+            <Text style={styles.btnAcaoTexto}>PRECISO CONVERSAR</Text>
+          </TouchableOpacity>
 
-            <TouchableOpacity
-              style={[styles.mainButton, styles.btnGreen]}
-              onPress={() => setAbaHome('profissionais')}
-            >
-              <Ionicons name="medkit-outline" size={20} color="#222" style={styles.btnIcon} />
-              <Text style={styles.buttonText}>ENCONTRAR PROFISSIONAIS</Text>
-            </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.btnHomeVerdeClaro}
+            onPress={() => setAbaHome('profissionais')}
+          >
+            <Text style={styles.btnAcaoTexto}>ENCONTRAR PROFISSIONAIS</Text>
+          </TouchableOpacity>
 
-            <TouchableOpacity
-              style={[styles.mainButton, styles.btnYellow]}
-              onPress={() => setAbaHome('mapa')}
-            >
-              <Ionicons name="location-outline" size={20} color="#222" style={styles.btnIcon} />
-              <Text style={styles.buttonText}>MAPA INCLUSIVO</Text>
-            </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.btnHomeAmareloClaro}
+            onPress={() => setAbaHome('mapa')}
+          >
+            <Text style={styles.btnAcaoTexto}>MAPA INCLUSIVO</Text>
+          </TouchableOpacity>
 
-            <View style={styles.quickAccessContainer}>
-              <Text style={styles.quickAccessTitle}>ACESSO RÁPIDO</Text>
-              <View style={styles.cardRow}>
-                <TouchableOpacity style={styles.card}>
-                  <Ionicons name="bookmark-outline" size={22} color="#3E5C5B" />
-                  <Text style={styles.cardLabel}>Favoritos</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.card}>
-                  <Ionicons name="calendar-outline" size={22} color="#3E5C5B" />
-                  <Text style={styles.cardLabel}>Agenda</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.card}>
-                  <Ionicons name="book-outline" size={22} color="#3E5C5B" />
-                  <Text style={styles.cardLabel}>Guias</Text>
-                </TouchableOpacity>
-              </View>
+          <View style={styles.acessoRapidoBox}>
+            <Text style={styles.acessoRapidoTitulo}>ACESSO RÁPIDO</Text>
+            <View style={styles.acessoRapidoGrid}>
+              <TouchableOpacity
+                style={styles.quadradoAcessoRapido}
+                onPress={() => Alert.alert('Favoritos', 'Atalho de favoritos.')}
+              />
+              <TouchableOpacity
+                style={styles.quadradoAcessoRapido}
+                onPress={() => Alert.alert('Agenda', 'Atalho da agenda.')}
+              />
+              <TouchableOpacity
+                style={styles.quadradoAcessoRapido}
+                onPress={() => Alert.alert('Guias', 'Atalho de guias.')}
+              />
             </View>
-          </ScrollView>
-        </>
+          </View>
+        </ScrollView>
       )}
 
       {/* Barra de Ícones Fixa no Fim da Tela */}
       <View style={styles.tabBar}>
         <TouchableOpacity
           style={styles.tabItem}
-          onPress={() => setAbaHome('inicio')}
+          onPress={() => setAbaHome(cadastrouMaeAtipica ? 'bem_vindo_mae' : 'inicio')}
         >
           <Ionicons
-            name={abaHome === 'inicio' ? 'home' : 'home-outline'}
-            size={22}
-            color={abaHome === 'inicio' ? '#111' : '#333'}
+            name="home"
+            size={24}
+            color={
+              abaHome === 'inicio' || abaHome === 'bem_vindo_mae' ? '#16A34A' : '#111'
+            }
           />
-          <Text style={[styles.tabText, abaHome === 'inicio' && styles.tabTextAtivo]}>
-            Início
+          <Text
+            style={[
+              styles.tabText,
+              (abaHome === 'inicio' || abaHome === 'bem_vindo_mae') &&
+                styles.tabTextAtivo,
+            ]}
+          >
+            Inicio
           </Text>
         </TouchableOpacity>
 
@@ -933,9 +1508,9 @@ export default function App() {
           onPress={() => setAbaHome('apoio')}
         >
           <Ionicons
-            name={abaHome === 'apoio' ? 'heart' : 'heart-outline'}
-            size={22}
-            color={abaHome === 'apoio' ? '#111' : '#333'}
+            name="heart"
+            size={24}
+            color={abaHome === 'apoio' ? '#16A34A' : '#111'}
           />
           <Text style={[styles.tabText, abaHome === 'apoio' && styles.tabTextAtivo]}>
             Apoio
@@ -947,12 +1522,12 @@ export default function App() {
           onPress={() => setAbaHome('profissionais')}
         >
           <Ionicons
-            name={abaHome === 'profissionais' ? 'medkit' : 'medkit-outline'}
-            size={22}
-            color={abaHome === 'profissionais' ? '#111' : '#333'}
+            name="briefcase"
+            size={24}
+            color={abaHome === 'profissionais' ? '#16A34A' : '#111'}
           />
           <Text style={[styles.tabText, abaHome === 'profissionais' && styles.tabTextAtivo]}>
-            Profissionais
+            Profissional
           </Text>
         </TouchableOpacity>
 
@@ -961,9 +1536,9 @@ export default function App() {
           onPress={() => setAbaHome('mapa')}
         >
           <Ionicons
-            name={abaHome === 'mapa' ? 'map' : 'map-outline'}
-            size={22}
-            color={abaHome === 'mapa' ? '#111' : '#333'}
+            name="location"
+            size={24}
+            color={abaHome === 'mapa' ? '#16A34A' : '#111'}
           />
           <Text style={[styles.tabText, abaHome === 'mapa' && styles.tabTextAtivo]}>
             Mapa
@@ -975,9 +1550,9 @@ export default function App() {
           onPress={() => setAbaHome('perfil')}
         >
           <Ionicons
-            name={abaHome === 'perfil' ? 'person' : 'person-outline'}
-            size={22}
-            color={abaHome === 'perfil' ? '#111' : '#333'}
+            name="person"
+            size={24}
+            color={abaHome === 'perfil' ? '#16A34A' : '#111'}
           />
           <Text style={[styles.tabText, abaHome === 'perfil' && styles.tabTextAtivo]}>
             Perfil
@@ -1079,6 +1654,28 @@ const styles = StyleSheet.create({
     color: '#666',
     marginBottom: 20,
     lineHeight: 20,
+  },
+
+  caixaAvisoNaoCadastrado: {
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 14,
+    gap: 6,
+  },
+
+  textoAvisoNaoCadastrado: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#991B1B',
+  },
+
+  linkCriarContaAviso: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#2E7D32',
   },
 
   cardFilho: {
@@ -1286,7 +1883,7 @@ const styles = StyleSheet.create({
 
   containerHome: {
     flex: 1,
-    backgroundColor: '#F5F5DC',
+    backgroundColor: '#FFF',
   },
 
   headerHome: {
@@ -1295,8 +1892,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 20,
     paddingTop: Platform.OS === 'android' ? 45 : 15,
-    paddingBottom: 8,
+    paddingBottom: 10,
     backgroundColor: '#FFF',
+  },
+
+  headerRightGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
   },
 
   btnSairTopo: {
@@ -1305,94 +1908,159 @@ const styles = StyleSheet.create({
 
   logoTextHome: {
     fontSize: 28,
-    fontWeight: 'bold',
-    color: '#3E5C5B',
+    fontWeight: '400',
+    color: '#111',
+  },
+
+  // TELA 1: HOME
+  scrollHome: {
+    flex: 1,
+    backgroundColor: '#FAF7F5',
+  },
+
+  contentHome: {
+    paddingHorizontal: 20,
+    paddingTop: 4,
+    paddingBottom: 24,
   },
 
   subtitleHome: {
     textAlign: 'center',
     fontSize: 14,
-    color: '#444',
-    marginTop: 10,
-    marginBottom: 20,
+    color: '#222',
+    marginBottom: 14,
   },
 
-  scrollHome: {
-    flex: 1,
+  espacoSuperiorHome: {
+    height: 110,
   },
 
-  contentHome: {
-    paddingHorizontal: 20,
-    paddingBottom: 24,
-    alignItems: 'center',
-  },
-
-  mainButton: {
-    width: '100%',
-    flexDirection: 'row',
-    paddingVertical: 16,
-    borderRadius: 12,
+  btnHomeVerdeClaro: {
+    backgroundColor: '#5EE365',
+    borderRadius: 14,
+    paddingVertical: 15,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 15,
+    marginBottom: 16,
   },
 
-  btnIcon: {
-    marginRight: 8,
+  btnHomeAmareloClaro: {
+    backgroundColor: '#F3C767',
+    borderRadius: 14,
+    paddingVertical: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 24,
   },
 
-  btnBlue: {
-    backgroundColor: '#7A9AAB',
+  // TELA 2: BEM-VINDO! (MÃE ATÍPICA CADASTRADA)
+  scrollBemVindo: {
+    flex: 1,
+    backgroundColor: '#FFF',
   },
 
-  btnGreen: {
-    backgroundColor: '#5CD662',
+  contentBemVindo: {
+    paddingHorizontal: 22,
+    paddingTop: 12,
+    paddingBottom: 24,
   },
 
-  btnYellow: {
-    backgroundColor: '#F3C562',
+  tituloSejaBemVinda: {
+    fontSize: 22,
+    fontWeight: '400',
+    color: '#111',
+    textAlign: 'center',
+    letterSpacing: 0.6,
+    marginBottom: 14,
   },
 
-  buttonText: {
-    color: '#222',
-    fontWeight: 'bold',
-    fontSize: 14,
+  maesOnlineRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginBottom: 24,
+  },
+
+  maesOnlineTexto: {
+    fontSize: 19,
+    fontWeight: '400',
+    color: '#111',
+  },
+
+  bolinhaOnline: {
+    width: 11,
+    height: 11,
+    borderRadius: 6,
+    backgroundColor: '#000',
+  },
+
+  maesOnlineNumero: {
+    fontSize: 19,
+    fontWeight: '400',
+    color: '#111',
+  },
+
+  btnAcaoAzul: {
+    backgroundColor: '#7A9FB2',
+    borderRadius: 14,
+    paddingVertical: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+
+  btnAcaoVerde: {
+    backgroundColor: '#199E1F',
+    borderRadius: 14,
+    paddingVertical: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+
+  btnAcaoOuro: {
+    backgroundColor: '#C5A55A',
+    borderRadius: 14,
+    paddingVertical: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 24,
+  },
+
+  btnAcaoTexto: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: '#111',
     letterSpacing: 0.5,
   },
 
-  quickAccessContainer: {
+  acessoRapidoBox: {
     width: '100%',
-    marginTop: 15,
   },
 
-  quickAccessTitle: {
-    fontSize: 12,
-    color: '#555',
-    marginBottom: 10,
-    fontWeight: '600',
+  acessoRapidoTitulo: {
+    fontSize: 13,
+    fontWeight: '400',
+    color: '#111',
+    letterSpacing: 0.5,
+    marginBottom: 12,
   },
 
-  cardRow: {
+  acessoRapidoGrid: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    gap: 12,
   },
 
-  card: {
-    width: '31%',
-    height: 80,
-    backgroundColor: '#DDD7CC',
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
+  quadradoAcessoRapido: {
+    flex: 1,
+    aspectRatio: 1,
+    backgroundColor: '#D9D9D9',
+    borderRadius: 14,
   },
 
-  cardLabel: {
-    fontSize: 12,
-    color: '#3E5C5B',
-    fontWeight: '600',
-    marginTop: 6,
-  },
-
+  // TELA PERFIL
   scrollPerfil: {
     flex: 1,
     backgroundColor: '#FFF',
@@ -1407,14 +2075,14 @@ const styles = StyleSheet.create({
   perfilHeaderCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 18,
-    marginBottom: 24,
+    gap: 16,
+    marginBottom: 22,
   },
 
   avatarCirculo: {
-    width: 84,
-    height: 84,
-    borderRadius: 42,
+    width: 82,
+    height: 82,
+    borderRadius: 41,
     borderWidth: 2,
     borderColor: '#111',
     alignItems: 'center',
@@ -1433,11 +2101,37 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
 
+  perfilEmailTexto: {
+    fontSize: 12,
+    color: '#555',
+    marginTop: 2,
+  },
+
   perfilSubAnonimo: {
     fontSize: 12,
     color: '#2E7D32',
     marginTop: 4,
     fontWeight: '600',
+  },
+
+  btnCorrigirMae: {
+    marginTop: 8,
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#3E5C5B',
+    backgroundColor: '#F5F5DC',
+  },
+
+  btnCorrigirMaeTexto: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#3E5C5B',
   },
 
   faixaFilhoEditar: {
@@ -1449,7 +2143,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 12,
-    marginBottom: 26,
+    marginBottom: 18,
   },
 
   faixaFilhoTexto: {
@@ -1465,6 +2159,50 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#111',
     letterSpacing: 0.5,
+  },
+
+  blocoFilhosPerfil: {
+    marginBottom: 22,
+    gap: 10,
+  },
+
+  blocoFilhosTitulo: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#3E5C5B',
+    letterSpacing: 0.6,
+  },
+
+  semFilhosTexto: {
+    fontSize: 13,
+    color: '#666',
+  },
+
+  cartaoFilhoPerfil: {
+    backgroundColor: '#F7F5EE',
+    borderWidth: 1,
+    borderColor: '#E2DDD0',
+    borderRadius: 12,
+    padding: 12,
+    gap: 3,
+  },
+
+  cartaoFilhoNome: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#111',
+  },
+
+  cartaoFilhoDetalhe: {
+    fontSize: 12,
+    color: '#444',
+  },
+
+  cartaoFilhoTags: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#2E7D32',
+    marginTop: 2,
   },
 
   listaPerfilContainer: {
@@ -1505,15 +2243,87 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
 
+  btnExcluirPerfil: {
+    marginTop: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 13,
+    borderRadius: 10,
+    backgroundColor: '#B91C1C',
+  },
+
+  btnExcluirPerfilTexto: {
+    color: '#FFF',
+    fontWeight: '700',
+    fontSize: 13,
+    letterSpacing: 0.6,
+  },
+
+  caixaConfirmacaoExclusao: {
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    borderRadius: 12,
+    padding: 14,
+    gap: 8,
+  },
+
+  tituloConfirmacaoExclusao: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#991B1B',
+  },
+
+  textoConfirmacaoExclusao: {
+    fontSize: 12,
+    color: '#7F1D1D',
+  },
+
+  botoesConfirmacaoRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+    marginTop: 4,
+  },
+
+  btnCancelarExclusao: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    backgroundColor: '#FFF',
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+  },
+
+  btnCancelarExclusaoTexto: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#374151',
+  },
+
+  btnConfirmarExclusao: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    backgroundColor: '#B91C1C',
+  },
+
+  btnConfirmarExclusaoTexto: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFF',
+  },
+
+  // BARRA INFERIOR
   tabBar: {
     flexDirection: 'row',
     justifyContent: 'space-around',
     alignItems: 'center',
-    backgroundColor: '#EAE5DB',
-    paddingTop: 10,
-    paddingBottom: Platform.OS === 'android' ? 14 : 10,
-    borderTopWidth: 1,
-    borderTopColor: '#D8D2C6',
+    backgroundColor: '#D9D9D9',
+    paddingTop: 8,
+    paddingBottom: Platform.OS === 'android' ? 12 : 8,
   },
 
   tabItem: {
@@ -1524,12 +2334,12 @@ const styles = StyleSheet.create({
 
   tabText: {
     fontSize: 11,
-    color: '#555',
-    marginTop: 3,
+    color: '#111',
+    marginTop: 2,
   },
 
   tabTextAtivo: {
-    color: '#2E7D32',
-    fontWeight: 'bold',
+    color: '#111',
+    fontWeight: '600',
   },
 });
