@@ -12,6 +12,7 @@ import {
   Alert,
   SafeAreaView,
   Switch,
+  Share,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
@@ -28,6 +29,24 @@ import {
 } from 'firebase/auth';
 
 const OPCOES_DIFICULDADE = ['TEA', 'TDAH', 'TOD', 'OUTROS'];
+const OPCOES_ESPECIALIDADE = [
+  'Neuropediatra',
+  'Psicólogo(a)',
+  'Fonoaudiólogo(a)',
+  'Terapeuta Ocupacional',
+  'Psicopedagogo(a)',
+  'Fisioterapeuta',
+  'Outros',
+];
+const DESTAQUES_AVALIACAO = [
+  'ACOLHEDORA',
+  'PACIENTE',
+  'HUMANIZADA',
+  'ATENCIOSA',
+];
+const RELATOS_PADRAO = ['ACOLHEDORA', 'PACIENTE', 'HUMANIZADA'];
+const FILTROS_PROFISSIONAIS = ['TEA', 'TDAH', 'TOD'];
+const COR_CORACAO_VERMELHO = '#DC2626';
 
 function criarFilhoVazio() {
   return {
@@ -112,13 +131,14 @@ const getChavePerfilUsuario = (uid) => `@bemvi:perfil:${uid || 'convidado'}`;
 export default function App() {
   // 'welcome' | 'login' | 'cadastro' | 'cadastro_filhos' | 'editar_mae' | 'home' | 'perfil_excluido'
   const [telaAtual, setTelaAtual] = useState('welcome');
-  // 'inicio' | 'bem_vindo_mae' | 'apoio' | 'profissionais' | 'mapa' | 'perfil'
+  // 'inicio' | 'bem_vindo_mae' | 'apoio' | 'lista_profissionais' | 'profissionais' | 'adicionar_profissional' | 'avaliar_profissional' | 'detalhe_profissional' | 'mapa' | 'perfil'
   const [abaHome, setAbaHome] = useState('inicio');
+  const [abaAnteriorProfissional, setAbaAnteriorProfissional] = useState('lista_profissionais');
   const [editandoFilhosPeloPerfil, setEditandoFilhosPeloPerfil] = useState(false);
 
   // Controla se a mãe atípica realizou o cadastro e habilita a tela "BEM-VINDO!"
   const [cadastrouMaeAtipica, setCadastrouMaeAtipica] = useState(false);
-  const [maesOnline] = useState(12);
+  const [maesOnline, setMaesOnline] = useState(0);
 
   const [nome, setNome] = useState('');
   const [email, setEmail] = useState('');
@@ -139,6 +159,31 @@ export default function App() {
   // Estado para múltiplos filhos
   const [filhos, setFilhos] = useState([criarFilhoVazio()]);
 
+  // Estado para busca, filtros, avaliação, detalhes e profissionais salvos
+  const [buscaProfissional, setBuscaProfissional] = useState('');
+  const [filtroTagProfissional, setFiltroTagProfissional] = useState('');
+  const [profissionais, setProfissionais] = useState([]);
+  const [profissionalEmAvaliacaoId, setProfissionalEmAvaliacaoId] = useState(null);
+  const [coracoesAvaliacao, setCoracoesAvaliacao] = useState(5);
+  const [destaquesAvaliacao, setDestaquesAvaliacao] = useState([
+    'ACOLHEDORA',
+    'PACIENTE',
+    'HUMANIZADA',
+  ]);
+  const [relatoAvaliacao, setRelatoAvaliacao] = useState('');
+  const [profissionalEmDetalhe, setProfissionalEmDetalhe] = useState(null);
+  const [relatoExtraInput, setRelatoExtraInput] = useState('');
+  const [mostrarInputRelatoExtra, setMostrarInputRelatoExtra] = useState(false);
+
+  const [nomeProfissional, setNomeProfissional] = useState('');
+  const [especialidadeProfissional, setEspecialidadeProfissional] = useState('');
+  const [outraEspecialidadeProfissional, setOutraEspecialidadeProfissional] = useState('');
+  const [mostrarOpcoesEspecialidade, setMostrarOpcoesEspecialidade] = useState(false);
+  const [cidadeProfissional, setCidadeProfissional] = useState('RECIFE-PE');
+  const [sobreProfissional, setSobreProfissional] = useState('');
+  const [erroCadastroProfissional, setErroCadastroProfissional] = useState('');
+  const [salvandoProfissional, setSalvandoProfissional] = useState(false);
+
   // Estado do modo anônimo no perfil
   const [modoAnonimo, setModoAnonimo] = useState(false);
 
@@ -147,6 +192,7 @@ export default function App() {
     nomeMae = nome,
     anonimo = modoAnonimo,
     cadastroMae = cadastrouMaeAtipica,
+    listaProfissionais = profissionais,
     uidOverride = null
   ) => {
     try {
@@ -154,6 +200,7 @@ export default function App() {
       const payload = {
         nome: (nomeMae || '').trim(),
         filhos: listaFilhos,
+        profissionais: listaProfissionais,
         modoAnonimo: Boolean(anonimo),
         cadastrouMaeAtipica: Boolean(cadastroMae),
         atualizadoEm: new Date().toISOString(),
@@ -164,6 +211,16 @@ export default function App() {
     }
   };
 
+  const limparFormularioProfissional = () => {
+    setNomeProfissional('');
+    setEspecialidadeProfissional('');
+    setOutraEspecialidadeProfissional('');
+    setMostrarOpcoesEspecialidade(false);
+    setCidadeProfissional('RECIFE-PE');
+    setSobreProfissional('');
+    setErroCadastroProfissional('');
+  };
+
   const limparEstadoSessao = () => {
     setNome('');
     setEmail('');
@@ -172,9 +229,21 @@ export default function App() {
     setAvisoNaoCadastrado('');
     setModoAnonimo(false);
     setCadastrouMaeAtipica(false);
+    setMaesOnline(0);
     setEditandoFilhosPeloPerfil(false);
     setPedirConfirmacaoExclusao(false);
     setFilhos([criarFilhoVazio()]);
+    setBuscaProfissional('');
+    setFiltroTagProfissional('');
+    setProfissionais([]);
+    setProfissionalEmAvaliacaoId(null);
+    setCoracoesAvaliacao(5);
+    setDestaquesAvaliacao(['ACOLHEDORA', 'PACIENTE', 'HUMANIZADA']);
+    setRelatoAvaliacao('');
+    setProfissionalEmDetalhe(null);
+    setRelatoExtraInput('');
+    setMostrarInputRelatoExtra(false);
+    limparFormularioProfissional();
     setAbaHome('inicio');
     setTelaAtual('welcome');
   };
@@ -182,21 +251,51 @@ export default function App() {
   useEffect(() => {
     const subscriber = onAuthStateChanged(auth, async (user) => {
       if (user) {
+        let nomeCarregado = '';
+        let filhosCarregados = null;
+        let profsCarregados = null;
+        let anonimoCarregado = false;
+
         try {
           const salvo = await AsyncStorage.getItem(getChavePerfilUsuario(user.uid));
           if (salvo) {
             const dados = JSON.parse(salvo);
-            if (dados.nome) setNome(dados.nome);
-            if (typeof dados.modoAnonimo === 'boolean') setModoAnonimo(dados.modoAnonimo);
-            if (typeof dados.cadastrouMaeAtipica === 'boolean') {
-              setCadastrouMaeAtipica(dados.cadastrouMaeAtipica);
+            if (dados.nome) {
+              nomeCarregado = dados.nome;
+              setNome(dados.nome);
+            }
+            if (typeof dados.modoAnonimo === 'boolean') {
+              anonimoCarregado = dados.modoAnonimo;
+              setModoAnonimo(dados.modoAnonimo);
             }
             if (Array.isArray(dados.filhos) && dados.filhos.length > 0) {
+              filhosCarregados = dados.filhos;
               setFilhos(dados.filhos);
+            }
+            if (Array.isArray(dados.profissionais)) {
+              profsCarregados = dados.profissionais;
+              setProfissionais(dados.profissionais);
             }
           }
           if (user.email) setEmail(user.email);
-          if (user.displayName && !nome) setNome(user.displayName);
+          const nomeFinal =
+            nomeCarregado ||
+            user.displayName ||
+            (user.email ? user.email.split('@')[0] : '');
+          if (nomeFinal && !nomeCarregado) setNome(nomeFinal);
+
+          setCadastrouMaeAtipica(true);
+          setMaesOnline(1);
+          setAbaHome((prev) => (prev === 'inicio' ? 'bem_vindo_mae' : prev));
+
+          await persistirDadosPerfil(
+            filhosCarregados || filhos,
+            nomeFinal,
+            anonimoCarregado,
+            true,
+            profsCarregados || profissionais,
+            user.uid
+          );
         } catch (err) {
           console.log('Erro ao carregar dados do perfil:', err);
         }
@@ -207,6 +306,7 @@ export default function App() {
             : 'home'
         );
       } else {
+        setMaesOnline(0);
         setTelaAtual((prev) =>
           prev === 'home' || prev === 'cadastro_filhos' || prev === 'editar_mae'
             ? 'welcome'
@@ -277,7 +377,8 @@ export default function App() {
         filhos,
         nomeLimpo,
         modoAnonimo,
-        cadastrouMaeAtipica
+        cadastrouMaeAtipica,
+        profissionais
       );
 
       Alert.alert('Cadastro atualizado!', `Seus dados foram salvos com sucesso.${avisoEmail}`);
@@ -347,7 +448,290 @@ export default function App() {
 
   const handleAlternarAnonimo = async (valor) => {
     setModoAnonimo(valor);
-    await persistirDadosPerfil(filhos, nome, valor, cadastrouMaeAtipica);
+    await persistirDadosPerfil(filhos, nome, valor, cadastrouMaeAtipica, profissionais);
+  };
+
+  const handleAvaliarCoracoesProfissional = async (profId, nota) => {
+    const notaLimitada = Math.max(1, Math.min(5, nota));
+    const listaAtualizada = profissionais.map((p) =>
+      p.id === profId ? { ...p, coracoes: notaLimitada } : p
+    );
+    setProfissionais(listaAtualizada);
+    setProfissionalEmDetalhe((prev) =>
+      prev && prev.id === profId ? { ...prev, coracoes: notaLimitada } : prev
+    );
+    await persistirDadosPerfil(
+      filhos,
+      nome,
+      modoAnonimo,
+      cadastrouMaeAtipica,
+      listaAtualizada
+    );
+  };
+
+  const handleExcluirProfissionalSalvo = async (prof) => {
+    if (!prof) return;
+    const listaAtualizada = profissionais.filter((p) => p.id !== prof.id);
+    setProfissionais(listaAtualizada);
+    setProfissionalEmDetalhe((prev) => (prev && prev.id === prof.id ? null : prev));
+    await persistirDadosPerfil(
+      filhos,
+      nome,
+      modoAnonimo,
+      cadastrouMaeAtipica,
+      listaAtualizada
+    );
+  };
+
+  const abrirDetalheProfissional = (prof, origem = 'lista_profissionais') => {
+    setAbaAnteriorProfissional(origem);
+    const relatosIniciais =
+      Array.isArray(prof.relatos) && prof.relatos.length > 0
+        ? prof.relatos
+        : ['ACOLHEDORA'];
+    setProfissionalEmDetalhe({
+      ...prof,
+      coracoes: typeof prof.coracoes === 'number' ? prof.coracoes : 5,
+      relatos: relatosIniciais,
+    });
+    setRelatoExtraInput('');
+    setMostrarInputRelatoExtra(false);
+    setAbaHome('detalhe_profissional');
+  };
+
+  const alternarRelatoDetalhe = (relatoTag) => {
+    setProfissionalEmDetalhe((prev) => {
+      if (!prev) return prev;
+      const atuais = Array.isArray(prev.relatos) ? prev.relatos : [];
+      const existe = atuais.includes(relatoTag);
+      const proximos = existe
+        ? atuais.filter((item) => item !== relatoTag)
+        : [...atuais, relatoTag];
+      return { ...prev, relatos: proximos };
+    });
+  };
+
+  const adicionarRelatoExtraDetalhe = () => {
+    const limpo = relatoExtraInput.trim().toUpperCase();
+    if (!limpo) return;
+    setProfissionalEmDetalhe((prev) => {
+      if (!prev) return prev;
+      const atuais = Array.isArray(prev.relatos) ? prev.relatos : [];
+      const proximos = atuais.includes(limpo) ? atuais : [...atuais, limpo];
+      return { ...prev, relatos: proximos };
+    });
+    setRelatoExtraInput('');
+    setMostrarInputRelatoExtra(false);
+  };
+
+  const handleSalvarDetalheProfissional = async () => {
+    if (!profissionalEmDetalhe) return;
+
+    const tagsSelecionadas = filhos.flatMap((f) => f.dificuldades || []);
+    const tagsUnicas = Array.from(
+      new Set([
+        ...(Array.isArray(profissionalEmDetalhe.tags)
+          ? profissionalEmDetalhe.tags
+          : []),
+        ...tagsSelecionadas.filter((t) => FILTROS_PROFISSIONAIS.includes(t)),
+      ])
+    );
+
+    const itemParaSalvar = {
+      ...profissionalEmDetalhe,
+      tags: tagsUnicas.length > 0 ? tagsUnicas : ['TEA'],
+      coracoes:
+        typeof profissionalEmDetalhe.coracoes === 'number'
+          ? profissionalEmDetalhe.coracoes
+          : 5,
+      relatos:
+        Array.isArray(profissionalEmDetalhe.relatos) &&
+        profissionalEmDetalhe.relatos.length > 0
+          ? profissionalEmDetalhe.relatos
+          : ['ACOLHEDORA'],
+    };
+
+    const jaExiste = profissionais.some((p) => p.id === itemParaSalvar.id);
+    const listaAtualizada = jaExiste
+      ? profissionais.map((p) => (p.id === itemParaSalvar.id ? itemParaSalvar : p))
+      : [itemParaSalvar, ...profissionais];
+
+    setProfissionais(listaAtualizada);
+    setProfissionalEmDetalhe(itemParaSalvar);
+    await persistirDadosPerfil(
+      filhos,
+      nome,
+      modoAnonimo,
+      cadastrouMaeAtipica,
+      listaAtualizada
+    );
+
+    Alert.alert('Profissional salvo!', 'A indicação foi salva na sua lista.');
+    setAbaHome('lista_profissionais');
+  };
+
+  const handleCompartilharProfissional = async (prof) => {
+    if (!prof) return;
+    const relatosTexto =
+      Array.isArray(prof.relatos) && prof.relatos.length > 0
+        ? `\nRelatos: ${prof.relatos.join(', ')}`
+        : '';
+    const coracoesTexto = '♥'.repeat(
+      typeof prof.coracoes === 'number' ? prof.coracoes : 5
+    );
+
+    const mensagem = `Indicação Bemvi:\n${(prof.nome || '').toUpperCase()}\nEspecialidade: ${(
+      prof.especialidade || ''
+    ).toUpperCase()}\nCidade: ${(prof.cidade || '').toUpperCase()}\nAvaliação: ${coracoesTexto}${relatosTexto}\nSobre: ${
+      prof.sobre || ''
+    }`;
+
+    try {
+      await Share.share({ message: mensagem });
+    } catch (err) {
+      console.log('Erro ao compartilhar profissional:', err);
+    }
+  };
+
+  const alternarDestaqueAvaliacao = (tag) => {
+    setDestaquesAvaliacao((prev) =>
+      prev.includes(tag) ? prev.filter((item) => item !== tag) : [...prev, tag]
+    );
+  };
+
+  const handleConcluirIndicacao = async () => {
+    const alvo =
+      profissionais.find((p) => p.id === profissionalEmAvaliacaoId) ||
+      profissionalEmDetalhe;
+
+    if (!alvo) {
+      setAbaHome('lista_profissionais');
+      return;
+    }
+
+    const relatoLimpo = relatoAvaliacao.trim();
+    const destaquesFinais =
+      destaquesAvaliacao.length > 0 ? destaquesAvaliacao : ['ACOLHEDORA'];
+    const notaFinal = Math.max(1, Math.min(5, coracoesAvaliacao));
+
+    const profissionalAtualizado = {
+      ...alvo,
+      coracoes: notaFinal,
+      relatos: destaquesFinais,
+      relatoMae: relatoLimpo,
+      sobre: relatoLimpo || alvo.sobre,
+    };
+
+    const listaAtualizada = profissionais.some((p) => p.id === profissionalAtualizado.id)
+      ? profissionais.map((p) =>
+          p.id === profissionalAtualizado.id ? profissionalAtualizado : p
+        )
+      : [profissionalAtualizado, ...profissionais];
+
+    setProfissionais(listaAtualizada);
+    setProfissionalEmDetalhe(profissionalAtualizado);
+    setAbaAnteriorProfissional('lista_profissionais');
+
+    await persistirDadosPerfil(
+      filhos,
+      nome,
+      modoAnonimo,
+      cadastrouMaeAtipica,
+      listaAtualizada
+    );
+
+    Alert.alert(
+      'Indicação concluída!',
+      `Avaliação de ${notaFinal} ${
+        notaFinal === 1 ? 'coração' : 'corações'
+      } salva para outras mães verem.`
+    );
+    setAbaHome('detalhe_profissional');
+  };
+
+  const handleProximoProfissional = async () => {
+    if (salvandoProfissional) return;
+
+    const nomeLimpo = nomeProfissional.trim();
+    const especialidadeLimpa =
+      especialidadeProfissional === 'Outros'
+        ? outraEspecialidadeProfissional.trim()
+        : especialidadeProfissional.trim();
+    const cidadeLimpa = cidadeProfissional.trim();
+    const sobreLimpo = sobreProfissional.trim();
+
+    if (!nomeLimpo) {
+      setErroCadastroProfissional('Informe o nome do profissional.');
+      return;
+    }
+
+    if (!especialidadeLimpa) {
+      setErroCadastroProfissional(
+        especialidadeProfissional === 'Outros'
+          ? 'Digite a especialidade do profissional.'
+          : 'Selecione uma especialidade.'
+      );
+      return;
+    }
+
+    if (!cidadeLimpa) {
+      setErroCadastroProfissional('Informe a cidade do atendimento.');
+      return;
+    }
+
+    if (!sobreLimpo) {
+      setErroCadastroProfissional('Preencha o campo sobre o profissional.');
+      return;
+    }
+
+    setSalvandoProfissional(true);
+    setErroCadastroProfissional('');
+
+    try {
+      const tagsSelecionadas = filhos.flatMap((f) => f.dificuldades || []);
+      const tagsUnicas = Array.from(
+        new Set(
+          tagsSelecionadas.filter((t) => FILTROS_PROFISSIONAIS.includes(t))
+        )
+      );
+
+      const novoProfissional = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        nome: nomeLimpo,
+        especialidade: especialidadeLimpa,
+        cidade: cidadeLimpa.toUpperCase(),
+        sobre: sobreLimpo,
+        coracoes: 5,
+        tags: tagsUnicas.length > 0 ? tagsUnicas : ['TEA'],
+        relatos: ['ACOLHEDORA', 'PACIENTE', 'HUMANIZADA'],
+        indicadoPor: modoAnonimo ? 'Mãe atípica (Anônima)' : nome.trim() || 'Mãe atípica',
+        criadoEm: new Date().toISOString(),
+      };
+
+      const listaAtualizada = [novoProfissional, ...profissionais];
+      setProfissionais(listaAtualizada);
+      setProfissionalEmAvaliacaoId(novoProfissional.id);
+      setProfissionalEmDetalhe(novoProfissional);
+      setCoracoesAvaliacao(5);
+      setDestaquesAvaliacao(['ACOLHEDORA', 'PACIENTE', 'HUMANIZADA']);
+      setRelatoAvaliacao('');
+
+      await persistirDadosPerfil(
+        filhos,
+        nome,
+        modoAnonimo,
+        cadastrouMaeAtipica,
+        listaAtualizada
+      );
+
+      limparFormularioProfissional();
+      setAbaHome('avaliar_profissional');
+    } catch (err) {
+      console.log('Erro ao preparar avaliação do profissional:', err);
+      setErroCadastroProfissional('Não foi possível avançar para a avaliação.');
+    } finally {
+      setSalvandoProfissional(false);
+    }
   };
 
   const handleLogin = async () => {
@@ -365,28 +749,52 @@ export default function App() {
     setEnviandoAuth(true);
     try {
       const cred = await signInWithEmailAndPassword(auth, emailLimpo, senhaLimpa);
-      let abrirBemVindo = false;
+      let nomePerfil =
+        cred.user.displayName ||
+        (cred.user.email ? cred.user.email.split('@')[0] : '') ||
+        nome;
+      let filhosPerfil = filhos;
+      let profsPerfil = profissionais;
+      let anonimoPerfil = modoAnonimo;
 
       try {
         const salvo = await AsyncStorage.getItem(getChavePerfilUsuario(cred.user.uid));
         if (salvo) {
           const dados = JSON.parse(salvo);
-          if (dados.nome) setNome(dados.nome);
-          if (typeof dados.modoAnonimo === 'boolean') setModoAnonimo(dados.modoAnonimo);
-          if (typeof dados.cadastrouMaeAtipica === 'boolean') {
-            setCadastrouMaeAtipica(dados.cadastrouMaeAtipica);
-            abrirBemVindo = dados.cadastrouMaeAtipica;
+          if (dados.nome) {
+            nomePerfil = dados.nome;
+            setNome(dados.nome);
+          }
+          if (typeof dados.modoAnonimo === 'boolean') {
+            anonimoPerfil = dados.modoAnonimo;
+            setModoAnonimo(dados.modoAnonimo);
           }
           if (Array.isArray(dados.filhos) && dados.filhos.length > 0) {
+            filhosPerfil = dados.filhos;
             setFilhos(dados.filhos);
+          }
+          if (Array.isArray(dados.profissionais)) {
+            profsPerfil = dados.profissionais;
+            setProfissionais(dados.profissionais);
           }
         }
       } catch (err) {
         console.log('Erro ao ler perfil no login:', err);
       }
 
+      setCadastrouMaeAtipica(true);
+      setMaesOnline(1);
+      await persistirDadosPerfil(
+        filhosPerfil,
+        nomePerfil,
+        anonimoPerfil,
+        true,
+        profsPerfil,
+        cred.user.uid
+      );
+
       setAvisoNaoCadastrado('');
-      setAbaHome(abrirBemVindo ? 'bem_vindo_mae' : 'inicio');
+      setAbaHome('bem_vindo_mae');
       setTelaAtual('home');
     } catch (error) {
       console.log('Erro no Login:', error?.code, error?.message);
@@ -425,7 +833,9 @@ export default function App() {
 
       const filhosIniciais = [criarFilhoVazio()];
       setCadastrouMaeAtipica(true);
+      setMaesOnline(1);
       setFilhos(filhosIniciais);
+      setProfissionais([]);
       setEditandoFilhosPeloPerfil(false);
       setAvisoNaoCadastrado('');
 
@@ -434,6 +844,7 @@ export default function App() {
         nomeLimpo,
         modoAnonimo,
         true,
+        [],
         userCredential.user.uid
       );
 
@@ -490,7 +901,13 @@ export default function App() {
     }));
 
     setFilhos(dadosFormatados);
-    await persistirDadosPerfil(dadosFormatados, nome, modoAnonimo, cadastrouMaeAtipica);
+    await persistirDadosPerfil(
+      dadosFormatados,
+      nome,
+      modoAnonimo,
+      cadastrouMaeAtipica,
+      profissionais
+    );
 
     Alert.alert('Tudo certo!', `${dadosFormatados.length} filho(a)(s) registrado(s) com sucesso.`);
     concluirCadastroFilhos(
@@ -1092,7 +1509,7 @@ export default function App() {
     );
   }
 
-  // TELA 3: HOME / BEM-VINDO! / PERFIL
+  // TELA 3: HOME / BEM-VINDO! / PERFIL / PROFISSIONAIS / PROFISSIONAIS SALVOS / ADICIONAR PROFISSIONAIS / AVALIAR PROFISSIONAL / DETALHE PROFISSIONAL
   const nomeExibicao = (
     nome ||
     auth.currentUser?.displayName ||
@@ -1125,21 +1542,107 @@ export default function App() {
     Alert.alert(titulo, mensagem);
   };
 
-  const mostrarTelaBemVindoMae = abaHome === 'bem_vindo_mae' && cadastrouMaeAtipica;
+  const maeEstaOnline = Boolean(auth.currentUser) || cadastrouMaeAtipica;
+  const mostrarContadorMaesOnline = maeEstaOnline && maesOnline > 0;
+  const mostrarTelaBemVindoMae =
+    mostrarContadorMaesOnline && (abaHome === 'bem_vindo_mae' || abaHome === 'inicio');
+  const naSecaoProfissional =
+    abaHome === 'lista_profissionais' ||
+    abaHome === 'profissionais' ||
+    abaHome === 'adicionar_profissional' ||
+    abaHome === 'avaliar_profissional' ||
+    abaHome === 'detalhe_profissional';
+
+  const termoBuscaNormalizado = buscaProfissional.trim().toUpperCase();
+  const profissionaisFiltrados = profissionais.filter((prof) => {
+    const matchesTag =
+      !filtroTagProfissional ||
+      (Array.isArray(prof.tags) && prof.tags.includes(filtroTagProfissional));
+
+    if (!matchesTag) return false;
+    if (!termoBuscaNormalizado) return true;
+
+    const camposTexto = [
+      prof.nome,
+      prof.especialidade,
+      prof.cidade,
+      prof.sobre,
+      ...(Array.isArray(prof.tags) ? prof.tags : []),
+      ...(Array.isArray(prof.relatos) ? prof.relatos : []),
+    ]
+      .join(' ')
+      .toUpperCase();
+
+    return camposTexto.includes(termoBuscaNormalizado);
+  });
+
+  const profissionalAvaliadoAtual =
+    profissionais.find((p) => p.id === profissionalEmAvaliacaoId) ||
+    profissionalEmDetalhe || {
+      id: 'avaliacao-preview',
+      nome: 'DRA ANA PAULA',
+      especialidade: 'PSICÓLOGA',
+      cidade: 'RECIFE-PE',
+      sobre: 'Atendimento acolhedor com experiência em TEA e Desenvolvimento Infantil',
+      coracoes: 5,
+      relatos: ['ACOLHEDORA'],
+    };
+
+  const detalheAtual =
+    profissionalEmDetalhe ||
+    profissionais[0] || {
+      id: 'preview',
+      nome: 'DRA ANA PAULA',
+      especialidade: 'PSICOLOGA',
+      cidade: 'RECIFE-PE',
+      sobre: 'Atendimento acolhedor com experiência em TEA e Desenvolvimento Infantil',
+      coracoes: 5,
+      relatos: ['ACOLHEDORA', 'PACIENTE', 'HUMANIZADA'],
+    };
+
+  const relatosSelecionadosDetalhe = Array.isArray(detalheAtual.relatos)
+    ? detalheAtual.relatos
+    : ['ACOLHEDORA'];
+
+  const listaRelatosExibida = Array.from(
+    new Set([...RELATOS_PADRAO, ...relatosSelecionadosDetalhe])
+  );
+
+  const notaCoracoesDetalhe =
+    typeof detalheAtual.coracoes === 'number' ? detalheAtual.coracoes : 5;
+
+  const destaqueRelatoCabecalho =
+    relatosSelecionadosDetalhe[0] || 'ACOLHEDORA';
 
   return (
     <SafeAreaView style={styles.containerHome}>
       {/* Cabeçalho */}
       <View style={styles.headerHome}>
         <TouchableOpacity
-          onPress={() =>
-            Alert.alert(
-              'Menu Bemvi',
-              `Você está em: ${abaHome.toUpperCase()}${modoAnonimo ? ' (Modo Anônimo ativo)' : ''}`
-            )
-          }
+          onPress={() => {
+            if (abaHome === 'detalhe_profissional') {
+              setAbaHome(abaAnteriorProfissional || 'lista_profissionais');
+            } else if (abaHome === 'avaliar_profissional') {
+              setAbaHome('adicionar_profissional');
+            } else {
+              Alert.alert(
+                'Menu Bemvi',
+                `Você está em: ${abaHome.toUpperCase()}${
+                  modoAnonimo ? ' (Modo Anônimo ativo)' : ''
+                }`
+              );
+            }
+          }}
         >
-          <Ionicons name="menu-outline" size={28} color="#111" />
+          <Ionicons
+            name={
+              abaHome === 'detalhe_profissional' || abaHome === 'avaliar_profissional'
+                ? 'arrow-back'
+                : 'menu-outline'
+            }
+            size={28}
+            color="#111"
+          />
         </TouchableOpacity>
 
         {abaHome === 'inicio' && !cadastrouMaeAtipica && (
@@ -1166,7 +1669,702 @@ export default function App() {
         </View>
       </View>
 
-      {abaHome === 'perfil' ? (
+      {abaHome === 'avaliar_profissional' ? (
+        // TELA AVALIAR PROFISSIONAL (1 A 5 CORAÇÕES VERMELHOS)
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={{ flex: 1 }}
+        >
+          <ScrollView
+            style={styles.scrollProfissionais}
+            contentContainerStyle={styles.contentAvaliarProfissional}
+            showsVerticalScrollIndicator={false}
+          >
+            <View style={styles.headerVoltarProfissional}>
+              <TouchableOpacity
+                onPress={() => setAbaHome('adicionar_profissional')}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Ionicons name="arrow-back" size={26} color="#111" />
+              </TouchableOpacity>
+              <Text style={styles.tituloAvaliarProfissional}>AVALIAR PROFISSIONAL</Text>
+            </View>
+
+            <View style={styles.cartaoResumoAvaliacao}>
+              <View style={styles.iconeProfissionalEsquerda}>
+                <Ionicons name="person" size={54} color="#000" />
+                <View style={styles.badgeFolhaProfissional} />
+              </View>
+              <View style={styles.infoResumoAvaliacao}>
+                <Text style={styles.textoResumoAvaliacao}>
+                  {(profissionalAvaliadoAtual.nome || '').toUpperCase()}
+                </Text>
+                <Text style={styles.textoResumoAvaliacao}>
+                  {(profissionalAvaliadoAtual.especialidade || '').toUpperCase()} ·{' '}
+                  {(profissionalAvaliadoAtual.cidade || '').toUpperCase()}
+                </Text>
+                <Text style={styles.textoResumoAvaliacao}>
+                  {(
+                    (Array.isArray(profissionalAvaliadoAtual.relatos) &&
+                      profissionalAvaliadoAtual.relatos[0]) ||
+                    'ACOLHEDORA'
+                  ).toUpperCase()}
+                </Text>
+              </View>
+            </View>
+
+            <Text style={styles.tituloExperienciaAvaliacao}>COMO FOI SUA EXPERIÊNCIA?</Text>
+            <Text style={styles.subtituloCoracoesAvaliacao}>
+              TOQUE NOS CORAÇÕES PARA AVALIAR
+            </Text>
+
+            <View style={styles.linhaCoracoesAvaliacao}>
+              {[1, 2, 3, 4, 5].map((nivel) => {
+                const ativo = nivel <= coracoesAvaliacao;
+                return (
+                  <TouchableOpacity
+                    key={nivel}
+                    onPress={() => setCoracoesAvaliacao(nivel)}
+                    hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+                    accessibilityLabel={`Avaliar com ${nivel} ${
+                      nivel === 1 ? 'coração' : 'corações'
+                    }`}
+                  >
+                    <Ionicons
+                      name={ativo ? 'heart' : 'heart-outline'}
+                      size={40}
+                      color={ativo ? COR_CORACAO_VERMELHO : '#9CA3AF'}
+                    />
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <Text style={styles.tituloDestaqueAvaliacao}>O QUE MAIS SE DESTACOU?</Text>
+            <View style={styles.gradeDestaquesAvaliacao}>
+              {DESTAQUES_AVALIACAO.map((tag) => {
+                const selecionado = destaquesAvaliacao.includes(tag);
+                return (
+                  <TouchableOpacity
+                    key={tag}
+                    style={[
+                      styles.pilulaDestaqueAvaliacao,
+                      selecionado
+                        ? styles.pilulaDestaqueAtiva
+                        : styles.pilulaDestaqueInativa,
+                    ]}
+                    onPress={() => alternarDestaqueAvaliacao(tag)}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.textoPilulaDestaque}>{tag}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <Text style={styles.labelRelatoAvaliacao}>SEU RELATO</Text>
+            <View style={styles.caixaRelatoAvaliacao}>
+              <TextInput
+                style={styles.inputRelatoAvaliacao}
+                placeholder="Conte como foi o atendimento e o que outras mães deveriam saber."
+                placeholderTextColor="#222"
+                value={relatoAvaliacao}
+                onChangeText={(texto) => setRelatoAvaliacao(texto.slice(0, 200))}
+                multiline
+                maxLength={200}
+                textAlignVertical="top"
+              />
+              <Text style={styles.contadorRelatoAvaliacao}>
+                {relatoAvaliacao.length}/200
+              </Text>
+            </View>
+            <Text style={styles.ajudaRelatoAvaliacao}>
+              Seu relato ajuda outras mães a encontrarem acolhimento.
+            </Text>
+
+            <TouchableOpacity
+              style={styles.btnConcluirIndicacao}
+              onPress={handleConcluirIndicacao}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.btnConcluirIndicacaoTexto}>CONCLUIR INDICAÇÃO</Text>
+            </TouchableOpacity>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      ) : abaHome === 'detalhe_profissional' ? (
+        // TELA DETALHE PROFISSIONAL
+        <ScrollView
+          style={styles.scrollProfissionais}
+          contentContainerStyle={styles.contentDetalheProfissional}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.topoDetalheProfissional}>
+            <View style={styles.iconeProfissionalEsquerda}>
+              <Ionicons name="person" size={62} color="#000" />
+              <View style={styles.badgeFolhaDetalhe} />
+            </View>
+
+            <View style={styles.balaoDetalheProfissional}>
+              <Text style={styles.textoBalaoDetalhe}>
+                {(detalheAtual.nome || '').toUpperCase()}
+              </Text>
+              <Text style={styles.textoBalaoDetalhe}>
+                {(detalheAtual.especialidade || '').toUpperCase()}
+              </Text>
+              <Text style={styles.textoBalaoDetalhe}>
+                {(detalheAtual.cidade || '').toUpperCase()}
+              </Text>
+              <Text style={styles.textoBalaoDetalhe}>
+                {destaqueRelatoCabecalho.toUpperCase()}
+              </Text>
+
+              <View style={styles.linhaCoracoesDetalhe}>
+                {[1, 2, 3, 4, 5].map((nivel) => (
+                  <TouchableOpacity
+                    key={nivel}
+                    onPress={() => {
+                      setProfissionalEmDetalhe((prev) =>
+                        prev ? { ...prev, coracoes: nivel } : prev
+                      );
+                      handleAvaliarCoracoesProfissional(detalheAtual.id, nivel);
+                    }}
+                    hitSlop={{ top: 6, bottom: 6, left: 3, right: 3 }}
+                  >
+                    <Ionicons
+                      name={nivel <= notaCoracoesDetalhe ? 'heart' : 'heart-outline'}
+                      size={19}
+                      color={
+                        nivel <= notaCoracoesDetalhe ? COR_CORACAO_VERMELHO : '#9CA3AF'
+                      }
+                    />
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          </View>
+
+          <View style={styles.blocoSobreDetalhe}>
+            <Text style={styles.tituloSobreDetalhe}>Sobre</Text>
+            <Text style={styles.textoSobreDetalhe}>
+              {detalheAtual.sobre ||
+                'Atendimento acolhedor com experiência em TEA e Desenvolvimento Infantil'}
+            </Text>
+          </View>
+
+          <View style={styles.secaoRelatosDetalhe}>
+            <View style={styles.relatosHeaderRow}>
+              <Text style={styles.tituloRelatosDetalhe}>Relatos</Text>
+              <TouchableOpacity
+                onPress={() => setMostrarInputRelatoExtra((prev) => !prev)}
+                hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+              >
+                <Text style={styles.linkAdicionarRelato}>+ relato</Text>
+              </TouchableOpacity>
+            </View>
+
+            {mostrarInputRelatoExtra && (
+              <View style={styles.linhaNovoRelato}>
+                <TextInput
+                  style={styles.inputNovoRelato}
+                  placeholder="Ex.: ATENCIOSA"
+                  placeholderTextColor="#666"
+                  value={relatoExtraInput}
+                  onChangeText={setRelatoExtraInput}
+                  autoCapitalize="characters"
+                />
+                <TouchableOpacity
+                  style={styles.btnConfirmarRelato}
+                  onPress={adicionarRelatoExtraDetalhe}
+                >
+                  <Text style={styles.btnConfirmarRelatoTexto}>OK</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            <View style={styles.pilulasRelatosColuna}>
+              {listaRelatosExibida.map((relato) => {
+                const selecionado = relatosSelecionadosDetalhe.includes(relato);
+                return (
+                  <TouchableOpacity
+                    key={relato}
+                    style={[
+                      styles.pilulaRelatoAzul,
+                      !selecionado && styles.pilulaRelatoInativa,
+                    ]}
+                    onPress={() => alternarRelatoDetalhe(relato)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.textoPilulaRelato}>{relato}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+
+          <View style={styles.acoesDetalheRow}>
+            <TouchableOpacity
+              style={styles.btnSalvarDetalhe}
+              onPress={handleSalvarDetalheProfissional}
+            >
+              <Text style={styles.btnSalvarDetalheTexto}>SALVAR</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.btnCompartilharDetalhe}
+              onPress={() => handleCompartilharProfissional(detalheAtual)}
+            >
+              <Text style={styles.btnCompartilharDetalheTexto}>COMPARTILHAR</Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      ) : abaHome === 'lista_profissionais' ? (
+        // TELA PROFISSIONAIS (EXIBE APENAS PROFISSIONAIS SALVOS COM BUSCA, FILTROS E AÇÕES)
+        <ScrollView
+          style={styles.scrollProfissionais}
+          contentContainerStyle={styles.contentListaProfissionais}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.topoListaProfissionais}>
+            <TouchableOpacity
+              onPress={() =>
+                setAbaHome(cadastrouMaeAtipica ? 'bem_vindo_mae' : 'inicio')
+              }
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons name="arrow-back" size={26} color="#111" />
+            </TouchableOpacity>
+            <Text style={styles.tituloListaProfissionais}>PROFISSIONAIS</Text>
+          </View>
+
+          <View style={styles.barraBuscaProfissionais}>
+            <Ionicons name="search" size={22} color="#111" />
+            <TextInput
+              style={styles.inputBuscaProfissionais}
+              placeholder="BUSCAR"
+              placeholderTextColor="#111"
+              value={buscaProfissional}
+              onChangeText={setBuscaProfissional}
+            />
+            {buscaProfissional.length > 0 && (
+              <TouchableOpacity onPress={() => setBuscaProfissional('')}>
+                <Ionicons name="close-circle" size={20} color="#111" />
+              </TouchableOpacity>
+            )}
+          </View>
+
+          <View style={styles.linhaFiltrosProfissionais}>
+            {FILTROS_PROFISSIONAIS.map((tag) => {
+              const ativo = filtroTagProfissional === tag;
+              let estiloBase = styles.filtroTea;
+              if (tag === 'TDAH') estiloBase = styles.filtroTdah;
+              if (tag === 'TOD') estiloBase = styles.filtroTod;
+
+              return (
+                <TouchableOpacity
+                  key={tag}
+                  style={[
+                    styles.pilulaFiltroProfissional,
+                    estiloBase,
+                    ativo && styles.filtroProfissionalSelecionado,
+                  ]}
+                  onPress={() =>
+                    setFiltroTagProfissional((prev) => (prev === tag ? '' : tag))
+                  }
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.textoFiltroProfissional}>{tag}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          {profissionaisFiltrados.length === 0 ? (
+            <View style={styles.cartaoVazioProfissional}>
+              <Text style={styles.textoVazioProfissional}>
+                {profissionais.length === 0
+                  ? 'Nenhum profissional salvo ainda. Toque em ADICIONAR INDICAÇÕES para cadastrar e salvar.'
+                  : 'Nenhum profissional salvo encontrado com esse filtro ou busca.'}
+              </Text>
+            </View>
+          ) : (
+            profissionaisFiltrados.map((prof) => {
+              const notaCoracoes =
+                typeof prof.coracoes === 'number' ? prof.coracoes : 5;
+              const destaqueCard =
+                (Array.isArray(prof.relatos) && prof.relatos[0]) ||
+                prof.sobre ||
+                '';
+
+              return (
+                <View key={prof.id} style={styles.blocoProfissionalCatalogo}>
+                  <View style={styles.linhaProfissionalCatalogo}>
+                    <View style={styles.iconeProfissionalEsquerda}>
+                      <Ionicons name="person" size={56} color="#000" />
+                      <View style={styles.badgeFolhaProfissional} />
+                    </View>
+
+                    <View style={styles.balaoCinzaProfissional}>
+                      <Text style={styles.textoBalaoProfissional}>
+                        {(prof.nome || '').toUpperCase()}
+                      </Text>
+                      <Text style={styles.textoBalaoProfissional}>
+                        {(prof.especialidade || '').toUpperCase()}
+                      </Text>
+                      <Text style={styles.textoBalaoProfissional}>
+                        {(prof.cidade || '').toUpperCase()}
+                      </Text>
+                      <Text style={styles.textoBalaoProfissional}>
+                        {destaqueCard.toUpperCase()}
+                      </Text>
+
+                      <View style={styles.linhaCoracoesProfissional}>
+                        {[1, 2, 3, 4, 5].map((nivel) => (
+                          <TouchableOpacity
+                            key={nivel}
+                            onPress={() =>
+                              handleAvaliarCoracoesProfissional(prof.id, nivel)
+                            }
+                            hitSlop={{ top: 6, bottom: 6, left: 3, right: 3 }}
+                          >
+                            <Ionicons
+                              name={nivel <= notaCoracoes ? 'heart' : 'heart-outline'}
+                              size={18}
+                              color={
+                                nivel <= notaCoracoes
+                                  ? COR_CORACAO_VERMELHO
+                                  : '#9CA3AF'
+                              }
+                            />
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    </View>
+
+                    <TouchableOpacity
+                      style={styles.btnSetaDetalheProfissional}
+                      onPress={() =>
+                        abrirDetalheProfissional(prof, 'lista_profissionais')
+                      }
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      accessibilityLabel="Ver detalhe do profissional"
+                    >
+                      <Ionicons name="arrow-forward" size={24} color="#111" />
+                    </TouchableOpacity>
+                  </View>
+
+                  <TouchableOpacity
+                    style={styles.btnExcluirProfissionalSalvo}
+                    onPress={() => handleExcluirProfissionalSalvo(prof)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.btnExcluirProfissionalSalvoTexto}>EXCLUIR</Text>
+                  </TouchableOpacity>
+                </View>
+              );
+            })
+          )}
+
+          <TouchableOpacity
+            style={styles.btnSalvosListaProfissionais}
+            onPress={() => setAbaHome('profissionais')}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.btnSalvosListaProfissionaisTexto}>
+              SALVOS{profissionais.length > 0 ? ` (${profissionais.length})` : ''}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.btnAdicionarIndicacoesLista}
+            onPress={() => {
+              limparFormularioProfissional();
+              setAbaHome('adicionar_profissional');
+            }}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.btnAdicionarIndicacoesListaTexto}>
+              ADICIONAR INDICAÇÕES
+            </Text>
+          </TouchableOpacity>
+        </ScrollView>
+      ) : abaHome === 'adicionar_profissional' ? (
+        // TELA ADICIONAR PROFISSIONAIS
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={{ flex: 1 }}
+        >
+          <ScrollView
+            style={styles.scrollProfissionais}
+            contentContainerStyle={styles.contentProfissionais}
+            showsVerticalScrollIndicator={false}
+          >
+            <View style={styles.headerVoltarProfissional}>
+              <TouchableOpacity
+                onPress={() => {
+                  setErroCadastroProfissional('');
+                  setAbaHome('lista_profissionais');
+                }}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Ionicons name="arrow-back" size={26} color="#111" />
+              </TouchableOpacity>
+              <Text style={styles.tituloAdicionarProfissionais}>
+                ADICIONAR PROFISSIONAIS
+              </Text>
+            </View>
+
+            <View style={styles.campoProfissionalBox}>
+              <Text style={styles.labelProfissional}>NOME DO PROFISSIONAL</Text>
+              <TextInput
+                style={styles.inputProfissionalCinza}
+                placeholder="Ex. Dra Ana Paula"
+                placeholderTextColor="#555"
+                value={nomeProfissional}
+                onChangeText={(texto) => {
+                  setNomeProfissional(texto);
+                  if (erroCadastroProfissional) setErroCadastroProfissional('');
+                }}
+              />
+            </View>
+
+            <View style={styles.campoProfissionalBox}>
+              <Text style={styles.labelProfissional}>ESPECIALIDADE</Text>
+              <TouchableOpacity
+                style={styles.seletorEspecialidadeCinza}
+                onPress={() => setMostrarOpcoesEspecialidade((prev) => !prev)}
+                activeOpacity={0.8}
+              >
+                <Text
+                  style={[
+                    styles.textoSeletorEspecialidade,
+                    especialidadeProfissional && styles.textoSeletorSelecionado,
+                  ]}
+                >
+                  {especialidadeProfissional
+                    ? especialidadeProfissional.toUpperCase()
+                    : 'SELECIONE'}
+                </Text>
+                <Ionicons
+                  name={mostrarOpcoesEspecialidade ? 'chevron-up' : 'chevron-down'}
+                  size={20}
+                  color="#222"
+                />
+              </TouchableOpacity>
+
+              {mostrarOpcoesEspecialidade && (
+                <View style={styles.opcoesEspecialidadeLista}>
+                  {OPCOES_ESPECIALIDADE.map((item) => {
+                    const ativa = especialidadeProfissional === item;
+                    return (
+                      <TouchableOpacity
+                        key={item}
+                        style={[
+                          styles.opcaoEspecialidadeItem,
+                          ativa && styles.opcaoEspecialidadeAtiva,
+                        ]}
+                        onPress={() => {
+                          setEspecialidadeProfissional(item);
+                          if (item !== 'Outros') {
+                            setOutraEspecialidadeProfissional('');
+                          }
+                          setMostrarOpcoesEspecialidade(false);
+                          if (erroCadastroProfissional) setErroCadastroProfissional('');
+                        }}
+                      >
+                        <Text
+                          style={[
+                            styles.opcaoEspecialidadeTexto,
+                            ativa && styles.opcaoEspecialidadeTextoAtivo,
+                          ]}
+                        >
+                          {item}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              )}
+
+              {especialidadeProfissional === 'Outros' && (
+                <TextInput
+                  style={[styles.inputProfissionalCinza, styles.inputOutraEspecialidade]}
+                  placeholder="Digite a especialidade"
+                  placeholderTextColor="#555"
+                  value={outraEspecialidadeProfissional}
+                  onChangeText={(texto) => {
+                    setOutraEspecialidadeProfissional(texto);
+                    if (erroCadastroProfissional) setErroCadastroProfissional('');
+                  }}
+                />
+              )}
+            </View>
+
+            <View style={styles.campoProfissionalBox}>
+              <Text style={styles.labelProfissional}>CIDADE</Text>
+              <TextInput
+                style={styles.inputProfissionalCinza}
+                placeholder="RECIFE-PE"
+                placeholderTextColor="#555"
+                value={cidadeProfissional}
+                onChangeText={(texto) => {
+                  setCidadeProfissional(texto);
+                  if (erroCadastroProfissional) setErroCadastroProfissional('');
+                }}
+                autoCapitalize="characters"
+              />
+            </View>
+
+            <View style={styles.campoProfissionalBox}>
+              <Text style={styles.labelProfissional}>SOBRE O PROFISSIONAL</Text>
+              <View style={styles.areaSobreCinza}>
+                <TextInput
+                  style={styles.inputSobreMultiline}
+                  placeholder="FALE SOBRE SUA EXPERIÊNCIA"
+                  placeholderTextColor="#444"
+                  value={sobreProfissional}
+                  onChangeText={(texto) => {
+                    setSobreProfissional(texto.slice(0, 200));
+                    if (erroCadastroProfissional) setErroCadastroProfissional('');
+                  }}
+                  multiline
+                  maxLength={200}
+                  textAlignVertical="top"
+                />
+                <Text style={styles.contadorCaracteres}>
+                  {sobreProfissional.length}/200
+                </Text>
+              </View>
+            </View>
+
+            {erroCadastroProfissional ? (
+              <Text style={styles.erroProfissionalTexto}>{erroCadastroProfissional}</Text>
+            ) : null}
+
+            <TouchableOpacity
+              style={[
+                styles.btnProximoProfissional,
+                salvandoProfissional && styles.btnDesabilitado,
+              ]}
+              onPress={handleProximoProfissional}
+              disabled={salvandoProfissional}
+            >
+              <Text style={styles.btnProximoProfissionalTexto}>
+                {salvandoProfissional ? 'SALVANDO...' : 'PRÓXIMO'}
+              </Text>
+            </TouchableOpacity>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      ) : abaHome === 'profissionais' ? (
+        // TELA PROFISSIONAIS SALVOS
+        <ScrollView
+          style={styles.scrollProfissionais}
+          contentContainerStyle={styles.contentProfissionaisSalvos}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.headerVoltarProfissional}>
+            <TouchableOpacity
+              onPress={() => setAbaHome('lista_profissionais')}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons name="arrow-back" size={26} color="#111" />
+            </TouchableOpacity>
+            <Text style={styles.tituloProfissionaisSalvos}>
+              {'PROFISSIONAIS\nSALVOS'}
+            </Text>
+          </View>
+
+          {profissionais.length === 0 ? (
+            <View style={styles.cartaoVazioProfissional}>
+              <Text style={styles.textoVazioProfissional}>
+                Nenhum profissional salvo ainda. Toque abaixo para adicionar.
+              </Text>
+            </View>
+          ) : (
+            profissionais.map((prof) => {
+              const notaCoracoes =
+                typeof prof.coracoes === 'number' ? prof.coracoes : 5;
+
+              return (
+                <View key={prof.id} style={styles.blocoProfissionalSalvoItem}>
+                  <View style={styles.linhaProfissionalSalvo}>
+                    <View style={styles.iconeProfissionalEsquerda}>
+                      <Ionicons name="person" size={54} color="#000" />
+                      <View style={styles.badgeFolhaProfissional} />
+                    </View>
+
+                    <View style={styles.balaoCinzaProfissional}>
+                      <Text style={styles.textoBalaoProfissional}>
+                        {(prof.nome || '').toUpperCase()}
+                      </Text>
+                      <Text style={styles.textoBalaoProfissional}>
+                        {(prof.especialidade || '').toUpperCase()}
+                      </Text>
+                      <Text style={styles.textoBalaoProfissional}>
+                        {(prof.cidade || '').toUpperCase()}
+                      </Text>
+                      <Text style={styles.textoBalaoProfissional}>
+                        {(prof.sobre || '').toUpperCase()}
+                      </Text>
+
+                      <View style={styles.linhaCoracoesProfissional}>
+                        {[1, 2, 3, 4, 5].map((nivel) => (
+                          <TouchableOpacity
+                            key={nivel}
+                            onPress={() =>
+                              handleAvaliarCoracoesProfissional(prof.id, nivel)
+                            }
+                            hitSlop={{ top: 6, bottom: 6, left: 3, right: 3 }}
+                          >
+                            <Ionicons
+                              name={nivel <= notaCoracoes ? 'heart' : 'heart-outline'}
+                              size={18}
+                              color={
+                                nivel <= notaCoracoes
+                                  ? COR_CORACAO_VERMELHO
+                                  : '#9CA3AF'
+                              }
+                            />
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    </View>
+
+                    <TouchableOpacity
+                      style={styles.btnSetaDetalheProfissional}
+                      onPress={() => abrirDetalheProfissional(prof, 'profissionais')}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      accessibilityLabel="Ver detalhe do profissional"
+                    >
+                      <Ionicons name="arrow-forward" size={24} color="#111" />
+                    </TouchableOpacity>
+                  </View>
+
+                  <TouchableOpacity
+                    style={styles.btnExcluirProfissionalSalvo}
+                    onPress={() => handleExcluirProfissionalSalvo(prof)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.btnExcluirProfissionalSalvoTexto}>EXCLUIR</Text>
+                  </TouchableOpacity>
+                </View>
+              );
+            })
+          )}
+
+          <TouchableOpacity
+            style={styles.btnAdicionarMaisProfissional}
+            onPress={() => {
+              limparFormularioProfissional();
+              setAbaHome('adicionar_profissional');
+            }}
+          >
+            <Ionicons name="add-circle-outline" size={20} color="#111" />
+            <Text style={styles.btnAdicionarMaisProfissionalTexto}>
+              ADICIONAR PROFISSIONAL
+            </Text>
+          </TouchableOpacity>
+        </ScrollView>
+      ) : abaHome === 'perfil' ? (
         <ScrollView
           style={styles.scrollPerfil}
           contentContainerStyle={styles.contentPerfil}
@@ -1374,7 +2572,7 @@ export default function App() {
           </View>
         </ScrollView>
       ) : mostrarTelaBemVindoMae ? (
-        // TELA "BEM-VINDO!" (SÓ APARECE QUANDO A MÃE ATÍPICA SE CADASTROU)
+        // TELA "BEM-VINDO!" (EXIBE CONTAGEM QUANDO HÁ MÃES ONLINE)
         <ScrollView
           style={styles.scrollBemVindo}
           contentContainerStyle={styles.contentBemVindo}
@@ -1382,11 +2580,13 @@ export default function App() {
         >
           <Text style={styles.tituloSejaBemVinda}>SEJA BEM VINDA!</Text>
 
-          <View style={styles.maesOnlineRow}>
-            <Text style={styles.maesOnlineTexto}>Mães Online</Text>
-            <View style={styles.bolinhaOnline} />
-            <Text style={styles.maesOnlineNumero}>{maesOnline}</Text>
-          </View>
+          {mostrarContadorMaesOnline && (
+            <View style={styles.maesOnlineRow}>
+              <Text style={styles.maesOnlineTexto}>Mães Online</Text>
+              <View style={styles.bolinhaOnline} />
+              <Text style={styles.maesOnlineNumero}>{maesOnline}</Text>
+            </View>
+          )}
 
           <TouchableOpacity
             style={styles.btnAcaoAzul}
@@ -1397,7 +2597,7 @@ export default function App() {
 
           <TouchableOpacity
             style={styles.btnAcaoVerde}
-            onPress={() => setAbaHome('profissionais')}
+            onPress={() => setAbaHome('lista_profissionais')}
           >
             <Text style={styles.btnAcaoTexto}>ENCONTRAR PROFISSIONAL</Text>
           </TouchableOpacity>
@@ -1447,7 +2647,7 @@ export default function App() {
 
           <TouchableOpacity
             style={styles.btnHomeVerdeClaro}
-            onPress={() => setAbaHome('profissionais')}
+            onPress={() => setAbaHome('lista_profissionais')}
           >
             <Text style={styles.btnAcaoTexto}>ENCONTRAR PROFISSIONAIS</Text>
           </TouchableOpacity>
@@ -1519,14 +2719,14 @@ export default function App() {
 
         <TouchableOpacity
           style={styles.tabItem}
-          onPress={() => setAbaHome('profissionais')}
+          onPress={() => setAbaHome('lista_profissionais')}
         >
           <Ionicons
             name="briefcase"
             size={24}
-            color={abaHome === 'profissionais' ? '#16A34A' : '#111'}
+            color={naSecaoProfissional ? '#16A34A' : '#111'}
           />
-          <Text style={[styles.tabText, abaHome === 'profissionais' && styles.tabTextAtivo]}>
+          <Text style={[styles.tabText, naSecaoProfissional && styles.tabTextAtivo]}>
             Profissional
           </Text>
         </TouchableOpacity>
@@ -1910,6 +3110,732 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: '400',
     color: '#111',
+  },
+
+  // TELA AVALIAR PROFISSIONAL
+  contentAvaliarProfissional: {
+    paddingHorizontal: 20,
+    paddingTop: 4,
+    paddingBottom: 24,
+  },
+
+  tituloAvaliarProfissional: {
+    fontSize: 18,
+    fontWeight: '400',
+    color: '#111',
+    letterSpacing: 0.4,
+  },
+
+  cartaoResumoAvaliacao: {
+    backgroundColor: '#D9D9D9',
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 16,
+  },
+
+  infoResumoAvaliacao: {
+    flex: 1,
+  },
+
+  textoResumoAvaliacao: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: '#111',
+    lineHeight: 15,
+    letterSpacing: 0.3,
+  },
+
+  tituloExperienciaAvaliacao: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#111',
+    letterSpacing: 0.4,
+  },
+
+  subtituloCoracoesAvaliacao: {
+    fontSize: 10,
+    fontWeight: '400',
+    color: '#4B5563',
+    letterSpacing: 0.3,
+    marginTop: 2,
+    marginBottom: 10,
+  },
+
+  linhaCoracoesAvaliacao: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 6,
+    marginBottom: 16,
+  },
+
+  tituloDestaqueAvaliacao: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#111',
+    letterSpacing: 0.4,
+    marginBottom: 10,
+  },
+
+  gradeDestaquesAvaliacao: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginBottom: 16,
+  },
+
+  pilulaDestaqueAvaliacao: {
+    borderRadius: 14,
+    paddingVertical: 7,
+    paddingHorizontal: 14,
+  },
+
+  pilulaDestaqueAtiva: {
+    backgroundColor: '#7A9FB2',
+  },
+
+  pilulaDestaqueInativa: {
+    backgroundColor: '#D9D9D9',
+  },
+
+  textoPilulaDestaque: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: '#111',
+    letterSpacing: 0.4,
+  },
+
+  labelRelatoAvaliacao: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#111',
+    letterSpacing: 0.4,
+    marginBottom: 8,
+  },
+
+  caixaRelatoAvaliacao: {
+    backgroundColor: '#D9D9D9',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    minHeight: 112,
+    justifyContent: 'space-between',
+  },
+
+  inputRelatoAvaliacao: {
+    fontSize: 12,
+    color: '#111',
+    minHeight: 74,
+  },
+
+  contadorRelatoAvaliacao: {
+    alignSelf: 'flex-end',
+    fontSize: 10,
+    color: '#111',
+    marginTop: 4,
+  },
+
+  ajudaRelatoAvaliacao: {
+    fontSize: 10,
+    color: '#4B5563',
+    marginTop: 6,
+    marginBottom: 16,
+  },
+
+  btnConcluirIndicacao: {
+    backgroundColor: '#19D424',
+    borderRadius: 16,
+    paddingVertical: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  btnConcluirIndicacaoTexto: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: '#111',
+    letterSpacing: 0.5,
+  },
+
+  // TELA PROFISSIONAIS (LISTA PRINCIPAL)
+  contentListaProfissionais: {
+    paddingHorizontal: 20,
+    paddingTop: 4,
+    paddingBottom: 24,
+  },
+
+  topoListaProfissionais: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 14,
+  },
+
+  tituloListaProfissionais: {
+    fontSize: 20,
+    fontWeight: '400',
+    color: '#111',
+    letterSpacing: 0.5,
+  },
+
+  barraBuscaProfissionais: {
+    backgroundColor: '#7A9FB2',
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 14,
+  },
+
+  inputBuscaProfissionais: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: '400',
+    color: '#111',
+    letterSpacing: 0.5,
+    paddingVertical: 0,
+  },
+
+  linhaFiltrosProfissionais: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    marginBottom: 20,
+  },
+
+  pilulaFiltroProfissional: {
+    flex: 1,
+    borderRadius: 16,
+    paddingVertical: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  filtroTea: {
+    backgroundColor: '#19D424',
+  },
+
+  filtroTdah: {
+    backgroundColor: '#D9D9D9',
+  },
+
+  filtroTod: {
+    backgroundColor: '#F3C767',
+  },
+
+  filtroProfissionalSelecionado: {
+    borderWidth: 2,
+    borderColor: '#111',
+  },
+
+  textoFiltroProfissional: {
+    fontSize: 14,
+    fontWeight: '400',
+    color: '#111',
+    letterSpacing: 0.5,
+  },
+
+  blocoProfissionalCatalogo: {
+    marginBottom: 18,
+  },
+
+  linhaProfissionalCatalogo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+
+  btnSalvosListaProfissionais: {
+    alignSelf: 'flex-end',
+    backgroundColor: '#7A9FB2',
+    borderRadius: 14,
+    paddingVertical: 11,
+    paddingHorizontal: 22,
+    marginTop: 4,
+    marginBottom: 14,
+  },
+
+  btnSalvosListaProfissionaisTexto: {
+    fontSize: 15,
+    fontWeight: '400',
+    color: '#111',
+    letterSpacing: 0.5,
+  },
+
+  btnAdicionarIndicacoesLista: {
+    backgroundColor: '#199E1F',
+    borderRadius: 16,
+    paddingVertical: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  btnAdicionarIndicacoesListaTexto: {
+    fontSize: 16,
+    fontWeight: '400',
+    color: '#111',
+    letterSpacing: 0.5,
+  },
+
+  // TELA DETALHE PROFISSIONAL
+  contentDetalheProfissional: {
+    paddingHorizontal: 22,
+    paddingTop: 6,
+    paddingBottom: 24,
+  },
+
+  topoDetalheProfissional: {
+    alignItems: 'center',
+    marginBottom: 18,
+  },
+
+  badgeFolhaDetalhe: {
+    position: 'absolute',
+    right: 4,
+    top: 28,
+    width: 12,
+    height: 8,
+    borderRadius: 6,
+    backgroundColor: '#000',
+    transform: [{ rotate: '35deg' }],
+  },
+
+  balaoDetalheProfissional: {
+    width: '54%',
+    minWidth: 165,
+    backgroundColor: '#D9D9D9',
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginTop: 4,
+  },
+
+  textoBalaoDetalhe: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: '#111',
+    lineHeight: 15,
+    letterSpacing: 0.3,
+  },
+
+  linhaCoracoesDetalhe: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 8,
+  },
+
+  blocoSobreDetalhe: {
+    backgroundColor: '#D9D9D9',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    minHeight: 125,
+    marginBottom: 16,
+  },
+
+  tituloSobreDetalhe: {
+    fontSize: 12,
+    fontWeight: '400',
+    color: '#111',
+    marginBottom: 14,
+  },
+
+  textoSobreDetalhe: {
+    fontSize: 12,
+    fontWeight: '400',
+    color: '#111',
+    lineHeight: 17,
+    paddingHorizontal: 14,
+  },
+
+  secaoRelatosDetalhe: {
+    marginBottom: 22,
+  },
+
+  relatosHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+
+  tituloRelatosDetalhe: {
+    fontSize: 14,
+    fontWeight: '400',
+    color: '#111',
+  },
+
+  linkAdicionarRelato: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#3E5C5B',
+  },
+
+  linhaNovoRelato: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 10,
+  },
+
+  inputNovoRelato: {
+    flex: 1,
+    backgroundColor: '#EFECE2',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontSize: 12,
+    color: '#111',
+  },
+
+  btnConfirmarRelato: {
+    backgroundColor: '#7A9FB2',
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+
+  btnConfirmarRelatoTexto: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#111',
+  },
+
+  pilulasRelatosColuna: {
+    gap: 10,
+  },
+
+  pilulaRelatoAzul: {
+    backgroundColor: '#7A9FB2',
+    borderRadius: 14,
+    paddingVertical: 9,
+    paddingHorizontal: 16,
+    alignSelf: 'flex-start',
+  },
+
+  pilulaRelatoInativa: {
+    opacity: 0.45,
+  },
+
+  textoPilulaRelato: {
+    fontSize: 13,
+    fontWeight: '400',
+    color: '#111',
+    letterSpacing: 0.5,
+  },
+
+  acoesDetalheRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginTop: 4,
+  },
+
+  btnSalvarDetalhe: {
+    flex: 1,
+    backgroundColor: '#199E1F',
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  btnSalvarDetalheTexto: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#111',
+    letterSpacing: 0.5,
+  },
+
+  btnCompartilharDetalhe: {
+    flex: 1.35,
+    backgroundColor: '#C5A55A',
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  btnCompartilharDetalheTexto: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#111',
+    letterSpacing: 0.5,
+  },
+
+  // TELA ADICIONAR PROFISSIONAIS E PROFISSIONAIS SALVOS
+  scrollProfissionais: {
+    flex: 1,
+    backgroundColor: '#FFF',
+  },
+
+  contentProfissionais: {
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    paddingBottom: 24,
+  },
+
+  contentProfissionaisSalvos: {
+    paddingHorizontal: 22,
+    paddingTop: 14,
+    paddingBottom: 28,
+  },
+
+  tituloProfissionaisSalvos: {
+    fontSize: 22,
+    fontWeight: '400',
+    color: '#111',
+    textAlign: 'center',
+    letterSpacing: 0.5,
+    lineHeight: 28,
+    marginBottom: 24,
+    flex: 1,
+  },
+
+  blocoProfissionalSalvoItem: {
+    marginBottom: 22,
+  },
+
+  linhaProfissionalSalvo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+
+  btnSetaDetalheProfissional: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  btnExcluirProfissionalSalvo: {
+    marginTop: 10,
+    alignSelf: 'flex-end',
+    backgroundColor: '#B91C1C',
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 18,
+  },
+
+  btnExcluirProfissionalSalvoTexto: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFF',
+    letterSpacing: 0.5,
+  },
+
+  iconeProfissionalEsquerda: {
+    width: 64,
+    height: 64,
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+
+  badgeFolhaProfissional: {
+    position: 'absolute',
+    right: 6,
+    top: 26,
+    width: 11,
+    height: 7,
+    borderRadius: 6,
+    backgroundColor: '#000',
+    transform: [{ rotate: '35deg' }],
+  },
+
+  balaoCinzaProfissional: {
+    flex: 1,
+    backgroundColor: '#D9D9D9',
+    borderRadius: 16,
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+  },
+
+  textoBalaoProfissional: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#111',
+    lineHeight: 16,
+    letterSpacing: 0.3,
+  },
+
+  linhaCoracoesProfissional: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 8,
+  },
+
+  btnAdicionarMaisProfissional: {
+    marginTop: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#199E1F',
+    borderRadius: 12,
+    paddingVertical: 13,
+  },
+
+  btnAdicionarMaisProfissionalTexto: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#111',
+    letterSpacing: 0.4,
+  },
+
+  headerVoltarProfissional: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 16,
+  },
+
+  tituloAdicionarProfissionais: {
+    fontSize: 16,
+    fontWeight: '400',
+    color: '#111',
+    letterSpacing: 0.4,
+  },
+
+  campoProfissionalBox: {
+    marginBottom: 12,
+  },
+
+  labelProfissional: {
+    fontSize: 11,
+    fontWeight: '400',
+    color: '#111',
+    letterSpacing: 0.5,
+    marginBottom: 6,
+  },
+
+  inputProfissionalCinza: {
+    backgroundColor: '#D9D9D9',
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    fontSize: 13,
+    color: '#111',
+  },
+
+  inputOutraEspecialidade: {
+    marginTop: 6,
+  },
+
+  seletorEspecialidadeCinza: {
+    backgroundColor: '#D9D9D9',
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+
+  textoSeletorEspecialidade: {
+    fontSize: 12,
+    color: '#222',
+    letterSpacing: 0.4,
+  },
+
+  textoSeletorSelecionado: {
+    color: '#111',
+    fontWeight: '600',
+  },
+
+  opcoesEspecialidadeLista: {
+    backgroundColor: '#F3F4F6',
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    marginTop: 4,
+  },
+
+  opcaoEspecialidadeItem: {
+    paddingVertical: 9,
+    paddingHorizontal: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+  },
+
+  opcaoEspecialidadeAtiva: {
+    backgroundColor: '#DCFCE7',
+  },
+
+  opcaoEspecialidadeTexto: {
+    fontSize: 12,
+    color: '#111',
+  },
+
+  opcaoEspecialidadeTextoAtivo: {
+    fontWeight: '700',
+    color: '#166534',
+  },
+
+  areaSobreCinza: {
+    backgroundColor: '#D9D9D9',
+    minHeight: 160,
+    padding: 10,
+    justifyContent: 'space-between',
+  },
+
+  inputSobreMultiline: {
+    fontSize: 12,
+    color: '#111',
+    minHeight: 120,
+  },
+
+  contadorCaracteres: {
+    alignSelf: 'flex-end',
+    fontSize: 11,
+    color: '#111',
+    marginTop: 4,
+  },
+
+  erroProfissionalTexto: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#B91C1C',
+    marginBottom: 8,
+  },
+
+  btnProximoProfissional: {
+    backgroundColor: '#199E1F',
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 8,
+    marginBottom: 10,
+  },
+
+  btnProximoProfissionalTexto: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: '#111',
+    letterSpacing: 0.5,
+  },
+
+  cartaoVazioProfissional: {
+    backgroundColor: '#F7F5EE',
+    borderWidth: 1,
+    borderColor: '#E2DDD0',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+  },
+
+  textoVazioProfissional: {
+    fontSize: 13,
+    color: '#555',
+    lineHeight: 19,
+    textAlign: 'center',
   },
 
   // TELA 1: HOME
